@@ -208,7 +208,7 @@ def train_model(
             loss = criterion(net(xb), yb)
             loss.backward()
             optimizer.step()
-            epoch_loss += float(loss) * len(idx)
+            epoch_loss += float(loss.detach()) * len(idx)
         epoch_loss /= n
         losses.append(epoch_loss)
 

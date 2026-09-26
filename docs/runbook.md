@@ -67,9 +67,29 @@ will appear in the README.
 
 ## Fallbacks
 
-_To be written: the event-mode clean run, the judge-picks-phrase-teammate-types
-fallback, and the nearest-centroid floor model as the model fallback._
+In priority order, so the demo never dead-ends:
+
+- **Judge is a different typist.** The guaranteed fallback: the judge picks the
+  phrase and a trained teammate types it. This is still a microphone-only attack
+  because the judge controls the unknown text.
+- **Onset detection struggles in the room.** Turn on the `Clean run (event mode)`
+  switch for one guaranteed-clean run: it uses key-event timestamps instead of
+  acoustic onsets. The dashboard labels this clearly, and it is the only place the
+  attack path touches key events.
+- **CNN underperforms or fails to load.** Select the `baseline` model. The
+  nearest-centroid floor is always kept working and gives an honest end-to-end
+  recovery, and "CNN vs centroid" is itself a clean result.
+- **No mic signal or no model at all.** The `Wiring demo (synthetic)` switch drives
+  the visuals so the interface can be shown; it is badged synthetic and never
+  presented as a real recovery.
 
 ## Troubleshooting
 
-_To be written: common failure modes and fixes._
+| Symptom | Fix |
+|---|---|
+| pynput captures nothing during collection | Grant Input Monitoring and Accessibility in System Settings, then restart the terminal or app. Preflight's `keyboard_permission` check and the macOS "not trusted" warning flag this. |
+| High false-onset count in a noisy room | Ambient calibration raises the effective threshold at attack start; ensure the 2 s calibration ran (INPUT SOURCES shows `Ambient: calibrated`). |
+| Recovered text is poor | Check per-key sample counts and window alignment before the model; read the confusion matrix. Adjacent physical keys confused is expected and the corrector fixes prose. |
+| Masker barely dents accuracy | Confirm OS audio processing is off (no echo cancellation, noise suppression, auto gain) so the masker is actually recorded; raise the level or re-tune the band. |
+| Dashboard washed out on a projector | Press `D` (or Theme) for the dark projector theme. |
+| Fonts look wrong | Fonts are self-hosted with a system fallback; there is no CDN, so a missing woff2 falls back to system fonts, it never blocks the page. |
