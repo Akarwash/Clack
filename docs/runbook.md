@@ -5,9 +5,31 @@ those plans complete._
 
 ## Preflight
 
-_To be written in BUILD_BACKEND: run `python scripts/preflight.py` and what each
-check verifies (mic, permission, device, model, self-hosted UI assets, writable
-data dirs)._
+Run before every demo and treat any failed item as blocking:
+
+```bash
+python scripts/preflight.py
+```
+
+It runs the same checks as `GET /status` and prints a checklist:
+
+- `microphone`: at least one input device is present (names the default).
+- `sample_rate`: the configured capture rate (44100).
+- `keyboard_permission`: a pynput listener can be created. Note: on macOS an
+  untrusted process prints "not trusted" and silently fails to capture rather than
+  raising, so also confirm Input Monitoring and Accessibility are granted in System
+  Settings before collecting training data.
+- `model`: a trained model exists under `data/models/` (fails until you train).
+- `attack_keylogger`: shows `DISABLED` (the pynput listener is not instantiated in
+  attack mode; it reads `ENABLED (event mode)` only during a deliberate clean run).
+- `speaker`: an output device is present (for the masker).
+- `compute`: the detected device (cuda, mps, or cpu).
+- `ambient_calibration`: reports not calibrated until an attack starts (calibration
+  runs at attack time over the quiet room).
+
+Start the server with `python scripts/serve.py` (it calls `ensure_dirs()` and
+prints the dashboard and trainer URLs). Everything is local; venue wifi cannot
+break the demo.
 
 ## Demo order
 

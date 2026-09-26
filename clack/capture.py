@@ -181,3 +181,65 @@ class Recorder:
             self._stream.stop()
             self._stream.close()
             self._stream = None
+
+
+class StreamReader:
+    """A thread-safe rolling buffer of the last ``seconds`` of audio.
+
+    Fed by a live input stream's callback (via :meth:`push`) and polled by the live
+    decoder (via :meth:`read_tail`). Used by :mod:`clack.stream` for the live
+    attack.
+
+    Parameters
+    ----------
+    seconds : float, optional
+        How much audio history to retain (default ``5.0``).
+    sample_rate : int or None, optional
+        Sample rate; defaults to ``config.SAMPLE_RATE``.
+    """
+
+    def __init__(self, seconds: float = 5.0, sample_rate: Optional[int] = None) -> None:
+        import threading
+
+        self.sample_rate = int(sample_rate or config.SAMPLE_RATE)
+        self.capacity = int(seconds * self.sample_rate)
+        self._buffer = np.zeros(0, dtype=np.float32)
+        self._lock = threading.Lock()
+        self.total_pushed = 0
+
+    def push(self, frames: np.ndarray) -> None:
+        """Append new frames, trimming to the retained window.
+
+        Parameters
+        ----------
+        frames : numpy.ndarray
+            New float32 mono samples.
+        """
+        chunk = np.asarray(frames, dtype=np.float32).reshape(-1)
+        with self._lock:
+            self._buffer = np.concatenate([self._buffer, chunk])
+            if self._buffer.shape[0] > self.capacity:
+                self._buffer = self._buffer[-self.capacity :]
+            self.total_pushed += chunk.shape[0]
+
+    def read_tail(self, seconds: float) -> np.ndarray:
+        """Return a copy of the most recent ``seconds`` of audio.
+
+        Parameters
+        ----------
+        seconds : float
+            How much recent audio to return.
+
+        Returns
+        -------
+        numpy.ndarray
+            A float32 copy (possibly shorter than requested early on).
+        """
+        n = int(seconds * self.sample_rate)
+        with self._lock:
+            return self._buffer[-n:].copy()
+
+    def read_all(self) -> np.ndarray:
+        """Return a copy of the entire retained buffer."""
+        with self._lock:
+            return self._buffer.copy()

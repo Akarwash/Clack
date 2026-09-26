@@ -1,0 +1,50 @@
+the quick brown fox jumps over the lazy dog.
+a person can type many words each minute when they are calm and focused.
+we protect sensitive typing from acoustic surveillance in shared rooms.
+security teams run an audit on every laptop to find who is exposed.
+the model listens to the sound of each key and guesses the letter.
+please enter your password before you open the secure document.
+the report shows how much an attacker could recover from the microphone.
+turn on the shield before you type any secret or private phrase.
+the keyboard makes a small click each time a finger presses a key.
+we measured the recovery and it fell after we armed the masker.
+this is a defensive tool that proves the threat and then stops it.
+the quiet room lets the detector find each press with a clean onset.
+train the model on the blue board and the second board through one mic.
+the judge picks a phrase and a teammate types it while we listen.
+a strong password mixes letters and numbers so it is hard to guess.
+the dashboard shows the raw guess next to the corrected sentence.
+we never show a number that we cannot reproduce in front of a judge.
+the attack uses sound alone and the keyboard events are disabled.
+please remember to save your work before you close the laptop.
+common english words appear again and again in ordinary sentences.
+the team collected data from three people so the model is not tuned to one.
+a fast typist can beat the paced mode so we ask for a steady rhythm.
+the noise floor is measured for two seconds when the attack begins.
+we build the floor model first so a broken network never breaks the demo.
+the spectrogram is an image of the sound that the classifier reads.
+every tunable value lives in one place so the run is easy to repeat.
+the masker plays a band of noise where the speakers are strong.
+we tune the band to cover the exact energy of the pressed keys.
+the exposure grade is a heuristic and not an industry rating.
+type naturally at about three to four keys per second for the demo.
+the letters e t a o i n s h r d l u are the most common in english.
+numbers like zero one two three four five six seven eight nine appear too.
+the system runs on one machine with no cloud and no live network call.
+we hold out a separate session so the result is honest and defensible.
+the recovered text turns to garbage when the shield is running.
+a small device near the keyboard can play the mask in a real setting.
+we log the config for every training run so the numbers can be checked.
+the onset detector fires once for each real press after the debounce.
+open the trainer page to collect data and then train the model.
+the confusion matrix shows which keys the model tends to mix up.
+practice the demo so nothing surprises you when the judges arrive.
+the quick fox and the lazy dog are a classic test of every letter.
+we correct the guesses with a local language model and show the lift.
+the microphone is close to the keys so the signal is loud and distinct.
+keep the geometry the same for training and for the live demo.
+the shield craters the recovery at the minimum effective level.
+we save an audit report for each machine and list them on the screen.
+a calm and steady typist gives the cleanest data for the classifier.
+the letters and digits and the space make up the full set of classes.
+this project turns an attack into a measured audit and mitigate loop.
