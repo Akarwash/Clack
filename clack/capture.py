@@ -131,29 +131,51 @@ class Recorder:
             self._first_callback = False
         self._queue.put(indata.copy())
 
+    def _open_stream(self) -> None:  # pragma: no cover - requires a real device
+        import sounddevice as sd
+
+        self._stream = sd.InputStream(
+            samplerate=self.sample_rate,
+            channels=self.channels,
+            dtype=config.DTYPE,
+            device=self.device,
+            callback=self._callback,
+        )
+        self._first_callback = True
+        self._stream.start()
+
     def start(self) -> None:
         """Open the input stream and begin buffering audio.
+
+        If the first open fails, PortAudio's device list is refreshed once and the
+        open retried: unplugging and replugging a USB microphone leaves PortAudio's
+        cached device handles stale in a long-running process (PaErrorCode -9986),
+        and a refresh recovers it without restarting the server.
 
         Raises
         ------
         RuntimeError
-            If the input device cannot be opened.
+            If the input device cannot be opened even after refreshing.
         """
+        try:  # pragma: no cover - requires a real device
+            self._open_stream()
+            return
+        except Exception:
+            pass
         try:  # pragma: no cover - requires a real device
             import sounddevice as sd
 
-            self._stream = sd.InputStream(
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                dtype=config.DTYPE,
-                device=self.device,
-                callback=self._callback,
-            )
-            self._first_callback = True
-            self._stream.start()
-        except Exception as exc:  # pragma: no cover - requires a real device
+            sd._terminate()
+            sd._initialize()
+        except Exception:
+            pass
+        try:  # pragma: no cover - requires a real device
+            self._open_stream()
+        except Exception as exc:
             raise RuntimeError(
-                f"could not open input device {self.device!r}: {exc}"
+                f"could not open input device {self.device!r}: {exc}. If you just "
+                "unplugged and replugged the microphone, the refresh retry did not "
+                "recover it; reseat the cable or restart the server."
             ) from exc
 
     def read_all(self) -> np.ndarray:
