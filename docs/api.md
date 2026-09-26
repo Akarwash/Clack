@@ -70,6 +70,16 @@ rate and the UI keeps only the latest. Slow clients drop `audio` frames, never
 The grade is a labeled Clack heuristic based on measured recoverability, not an
 industry rating.
 
+## Correction
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/correct` | `{lattice: [[key, ...], ...]}` | `{text}` |
+
+The lattice is the per-press ranked candidate keys; the server decodes it with the
+local n-gram beam search (bundled corpus, no network) so the dashboard can show the
+CORRECTED line next to RAW live.
+
 ## Status and preflight
 
 | Method | Path | Returns |

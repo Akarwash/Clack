@@ -33,8 +33,37 @@ break the demo.
 
 ## Demo order
 
-_To be written in BUILD_FRONTEND: the three-minute demo, spending about two
-minutes on audit, defense, and verification._
+The three-minute demo spends about two thirds of its time on the audit and
+defense (that is where the 30% Security Improvement is won):
+
+1. **Attack, fast (about 45s).** A judge picks a phrase and a teammate types it
+   (the guaranteed fallback), or the judge types it. Clack recovers it live from
+   sound, RAW next to CORRECTED. Point at the INPUT SOURCES line:
+   `Microphone: ACTIVE, Keyboard Events: DISABLED`. "This is the threat, and it is
+   real: 93% over a Zoom call in the research."
+2. **Exposure Check (about 30s).** Run it on that sample; show the Clack Exposure
+   Grade (labeled a heuristic) with its reasons. "Any org can run this on every
+   laptop to find who is exposed."
+3. **Arm Protected Typing (about 45s).** The continuous Standard Shield is on
+   before typing; type the same phrase, the recovered text turns to garbage and the
+   recovery bar craters. "The shield runs before you type, at the minimum effective
+   level, a plus-N-dB masker ratio at the mic."
+4. **Saved reports (about 20s).** Show audit reports from two or three machines.
+   "Run the audit across every endpoint in an organization."
+
+Close on the before/after bars: "Under our test setup, Clack cut recovery from X%
+to Y%. A measured audit-and-mitigate loop against acoustic leakage."
+
+Theme: press `D` (or the Theme button) to switch to the dark "projector" theme if
+the room is bright. The `Clean run (event mode)` switch is the guaranteed clean
+demo path; the `Wiring demo (synthetic)` switch drives the visuals without a mic or
+model and is clearly badged, for plumbing only (never presented as a real result).
+
+## Capturing the dashboard screenshot
+
+Run `python scripts/serve.py`, open `http://127.0.0.1:8000/`, start an attack (or
+the wiring demo), and capture the window. Save it as `docs/dashboard.png` and it
+will appear in the README.
 
 ## Fallbacks
 
