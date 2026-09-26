@@ -21,6 +21,10 @@ All notable changes to Clack are documented here. The format follows
   nearest-centroid floor and the CNN with an embedding head, seeded training with
   device detection and a confusion matrix, the offline attack with password
   search-space reduction, and embedding-prototype cross-keyboard calibration.
+- Evaluation (`feat/eval`): the metrics harness (onset recall/precision, top-k
+  recall, CER, latency, masker-to-key ratio), `evaluate_attack`,
+  `evaluate_defense`, `compare_models`, `cross_typist_eval`, and a `format_report`
+  that only reports computed values, plus `docs/evaluation.md`.
 
 ## [0.1.0] - 2026-09-26
 
