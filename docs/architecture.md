@@ -108,6 +108,54 @@ websockets for the backend, and a single-page vanilla-JS UI with self-hosted
 fonts and libraries (no CDN, no build step). The compute device is detected once
 at startup (CUDA, else Apple MPS, else CPU) and logged.
 
+## Model, features, and training
+
+The attack is a per-keystroke image classifier (the paper's pipeline: isolate
+keystrokes, convert each to a Mel spectrogram, classify the image).
+
+- **Features (`features.py`).** `log_mel(window, sr)` produces a
+  `(N_MELS, SPEC_FRAMES)` = `(64, ~35)` log-Mel spectrogram in dB, padding or
+  trimming the time axis to `SPEC_FRAMES` so the shape is guaranteed. Normalization
+  is per-sample z-score, so there is no cross-sample statistic and no train/val
+  leakage.
+- **Dataset (`dataset.py`).** `build_dataset` cuts onset-snapped windows per event,
+  featurizes, and keeps a per-sample `session_id` and `keyboard_id`.
+  `split_by_session` holds out WHOLE sessions for validation (never a random split
+  of one session), which is what makes the before/after result defensible.
+  Augmentation is train-only: waveform noise/time-shift/pitch (`augment_window`)
+  and SpecAugment time/frequency masks (`spec_augment`). Class imbalance is handled
+  with inverse-frequency `class_weights`.
+- **Models (`model.py`).** Two share one prediction contract (`scores`,
+  `predict_topk`): `CentroidBaseline` (the floor: mean flattened feature per class,
+  nearest centroid) built first and always kept working, and `ClackCNN` (three conv
+  blocks to an adaptive pool, a 128-d embedding head reused by calibration, then a
+  dropout classifier). `ClackCNN.embed()` is the cross-keyboard fingerprint.
+- **Training (`train.py`).** Seeds all RNGs from `config.SEED`, detects the device
+  once (CUDA, else MPS, else CPU), fits the centroid floor first (saved even if the
+  CNN step fails), then trains the CNN with class-weighted cross-entropy, a plateau
+  scheduler, and early stopping, keeping the best weights. Saves `model.pt`,
+  `config.json` (snapshot), `metrics.json` (overall/per-key/top-3 plus loss curve),
+  and `confusion_matrix.png`.
+- **Attack (`attack.py`).** `attack_audio`/`attack_wav` detect onsets, cut the
+  identical window, featurize, classify, and return per-press top-k with
+  confidences and the top-1 text. `password_search_space` reports the honest
+  top-3-per-position search-space reduction (not guaranteed exact recovery). Works
+  with either model via the shared interface. RAW output is always shown next to the
+  language-corrected output.
+
+## Multi-keyboard strategy
+
+- **Known boards (core).** The team's boards (blue and C3 Equalz), all captured
+  through the one mic, are in-distribution. Train ONE combined model on both boards'
+  training sessions (the classes are just the keys, not board-key pairs), so it
+  works on either board and enables the "swap keyboards, same model" demo. Per-board
+  models are the fallback. Report per-board accuracy using the per-sample
+  `keyboard_id`.
+- **Unseen board (stretch, `calibrate.py`).** For a board with zero training data,
+  type a short calibration string, average `embed()` vectors per key into
+  prototypes, and classify new keystrokes by nearest prototype (cosine). No
+  retraining. This never jeopardizes the guaranteed floor.
+
 ## Reference
 
 J. Harrison, E. Toreini, M. Mehrnezhad. "A Practical Deep Learning-Based Acoustic
