@@ -13,7 +13,7 @@ SEED = 42
 SAMPLE_RATE = 44100
 CHANNELS = 1
 DTYPE = "float32"
-INPUT_DEVICE = None            # None = default; pin an index at the venue
+INPUT_DEVICE = "HyperX SoloCast"   # pinned at the venue by NAME (index-independent; sounddevice resolves it). None = system default.
 
 # Keystroke window
 WINDOW_MS = 200
