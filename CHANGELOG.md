@@ -30,6 +30,12 @@ All notable changes to Clack are documented here. The format follows
   measurement and minimum-effective-level sweep, the adaptive band, the D1 Exposure
   Check (labeled Clack grade with reasons and recommendations), the D3 saved-report
   fleet view, and `docs/threat-model.md`.
+- Backend (`feat/backend`): local n-gram beam-search correction over a bundled
+  corpus (no network), the live streaming decoder with ambient calibration and a
+  provably mic-only attack path, the FastAPI server wiring the trainer, attack
+  WebSocket, defense, exposure, fleet, and status routes plus the static UI, the
+  `serve.py` and `preflight.py` entry points, and `docs/api.md` with the runbook
+  preflight section.
 
 ## [0.1.0] - 2026-09-26
 
