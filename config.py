@@ -35,6 +35,7 @@ ONSET_FRAME_MS = 5
 ONSET_K = 3.0                  # default; ambient calibration overrides this at attack startup
 ONSET_MIN_GAP_MS = 60          # transient debounce: one physical press-onset yields one onset
 ONSET_REFRACTORY_MS = 180      # keystroke refractory (attack path): collapse the press+release click pair of one keystroke into one onset. Below DEMO_MIN_GAP_MS so distinct keystrokes at the MVP cadence are kept.
+CLEAN_ISOLATION_MS = 200       # training data quality: a keystroke whose nearest neighbor press-onset is closer than this has an overlapping window (the previous key's release or the next key's press bleeds in) and is flagged as contaminated for optional cleaning.
 AMBIENT_CALIB_S = 2            # quiet room calibration at attack start to set the onset threshold dynamically
 
 # Modes

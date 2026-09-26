@@ -46,6 +46,10 @@ class Dataset:
         Per-sample source keyboard id, shape ``(N,)``.
     meta : dict
         Provenance metadata (source sessions, config snapshot).
+    clean : numpy.ndarray
+        Per-sample boolean, ``True`` when the keystroke's window is NOT
+        contaminated by a too-close neighbor (see
+        :func:`clack.segment.flag_close_onsets`).
     windows : numpy.ndarray or None
         Optional raw onset windows, shape ``(N, WINDOW_SAMPLES)``, kept in memory
         for on-the-fly waveform augmentation (not persisted to ``.npz``).
@@ -57,6 +61,7 @@ class Dataset:
     session_ids: np.ndarray
     keyboard_ids: np.ndarray
     meta: dict = field(default_factory=dict)
+    clean: Optional[np.ndarray] = None
     windows: Optional[np.ndarray] = None
 
     def __len__(self) -> int:
@@ -81,7 +86,7 @@ def featurize(window: np.ndarray, sample_rate: int) -> np.ndarray:
     return _features.normalize(_features.log_mel(window, sample_rate))
 
 
-def build_dataset(session_dirs: list[str], augment: bool = False) -> Dataset:
+def build_dataset(session_dirs: list[str], augment: bool = False, drop_contaminated: bool = False) -> Dataset:
     """Build a dataset from recording sessions.
 
     Parameters
@@ -91,6 +96,10 @@ def build_dataset(session_dirs: list[str], augment: bool = False) -> Dataset:
     augment : bool, optional
         Unused at build time; augmentation is applied on the fly at train time
         (kept for API symmetry). Default ``False``.
+    drop_contaminated : bool, optional
+        If ``True``, exclude keystrokes flagged as contaminated (window overlaps a
+        too-close neighbor; see :func:`clack.segment.flag_close_onsets`). Default
+        ``False`` (flag only; the flag is stored in ``Dataset.clean``).
 
     Returns
     -------
@@ -112,7 +121,9 @@ def build_dataset(session_dirs: list[str], augment: bool = False) -> Dataset:
     ys: list[int] = []
     sids: list[str] = []
     kids: list[str] = []
+    cleans: list[bool] = []
     sources: list[str] = []
+    per_session_flagged: dict[str, tuple[int, int]] = {}
 
     for session_dir in session_dirs:
         wav_path = os.path.join(session_dir, "audio.wav")
@@ -126,13 +137,17 @@ def build_dataset(session_dirs: list[str], augment: bool = False) -> Dataset:
         with open(events_path, encoding="utf-8") as fh:
             meta = json.load(fh)
 
-        windows, labels = _segment.windows_from_events(audio, meta.get("events", []), int(sr), meta)
-        for window, key in zip(windows, labels):
+        windows, labels, onsets = _segment.events_to_windows(audio, meta.get("events", []), int(sr), meta)
+        flags = _segment.flag_close_onsets(onsets, int(sr))
+        sid = meta.get("session_id", os.path.basename(session_dir))
+        per_session_flagged[sid] = (sum(flags), len(flags))
+        for window, key, contaminated in zip(windows, labels, flags):
             all_windows.append(window)
             ys.append(class_to_idx[key])
-            sids.append(meta.get("session_id", os.path.basename(session_dir)))
+            sids.append(sid)
             kids.append(meta.get("keyboard_id", "unknown"))
-        sources.append(meta.get("session_id", os.path.basename(session_dir)))
+            cleans.append(not contaminated)
+        sources.append(sid)
 
     if not all_windows:
         raise ValueError(
@@ -142,6 +157,24 @@ def build_dataset(session_dirs: list[str], augment: bool = False) -> Dataset:
         )
 
     windows_arr = np.stack(all_windows, axis=0).astype(np.float32)
+    clean_arr = np.asarray(cleans, dtype=bool)
+    total_flagged = int((~clean_arr).sum())
+    if total_flagged:
+        print(
+            f"[dataset] flagged {total_flagged}/{len(clean_arr)} contaminated windows "
+            f"(neighbor within {config.CLEAN_ISOLATION_MS}ms): "
+            + ", ".join(f"{s}={f}/{n}" for s, (f, n) in per_session_flagged.items())
+        )
+
+    if drop_contaminated:
+        keep = clean_arr
+        windows_arr = windows_arr[keep]
+        ys = list(np.asarray(ys)[keep])
+        sids = list(np.asarray(sids)[keep])
+        kids = list(np.asarray(kids)[keep])
+        clean_arr = clean_arr[keep]
+        print(f"[dataset] dropped {total_flagged} contaminated windows; {len(windows_arr)} remain")
+
     X = np.stack([featurize(w, config.SAMPLE_RATE) for w in windows_arr], axis=0).astype(np.float32)
     y = np.asarray(ys, dtype=np.int64)
     return Dataset(
@@ -150,7 +183,8 @@ def build_dataset(session_dirs: list[str], augment: bool = False) -> Dataset:
         classes=classes,
         session_ids=np.asarray(sids),
         keyboard_ids=np.asarray(kids),
-        meta={"sources": sources, "sample_rate": config.SAMPLE_RATE},
+        meta={"sources": sources, "sample_rate": config.SAMPLE_RATE, "flagged": per_session_flagged},
+        clean=clean_arr,
         windows=windows_arr,
     )
 
@@ -166,6 +200,7 @@ def save_dataset(dataset: Dataset, path: str) -> None:
         Destination ``.npz`` path.
     """
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    clean = dataset.clean if dataset.clean is not None else np.ones(dataset.X.shape[0], dtype=bool)
     np.savez_compressed(
         path,
         X=dataset.X,
@@ -173,6 +208,7 @@ def save_dataset(dataset: Dataset, path: str) -> None:
         classes=np.asarray(dataset.classes),
         session_ids=dataset.session_ids,
         keyboard_ids=dataset.keyboard_ids,
+        clean=clean,
         meta=json.dumps(dataset.meta),
     )
 
@@ -198,6 +234,8 @@ def load_dataset(path: str) -> Dataset:
     if not os.path.isfile(path):
         raise FileNotFoundError(f"dataset not found: {path}")
     with np.load(path, allow_pickle=False) as data:
+        n = data["X"].shape[0]
+        clean = data["clean"].astype(bool) if "clean" in data.files else np.ones(n, dtype=bool)
         return Dataset(
             X=data["X"].astype(np.float32),
             y=data["y"].astype(np.int64),
@@ -205,6 +243,7 @@ def load_dataset(path: str) -> Dataset:
             session_ids=data["session_ids"],
             keyboard_ids=data["keyboard_ids"],
             meta=json.loads(str(data["meta"])),
+            clean=clean,
             windows=None,
         )
 
@@ -260,6 +299,7 @@ def split_by_session(
             session_ids=dataset.session_ids[mask],
             keyboard_ids=dataset.keyboard_ids[mask],
             meta=dataset.meta,
+            clean=None if dataset.clean is None else dataset.clean[mask],
             windows=None if dataset.windows is None else dataset.windows[mask],
         )
 

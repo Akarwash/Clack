@@ -55,6 +55,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--name", default="combined", help="output model name")
     parser.add_argument("--recordings", default=config.RECORDINGS_DIR, help="recordings directory")
     parser.add_argument("--val-fraction", type=float, default=0.3, help="session holdout fraction if no eval sessions")
+    parser.add_argument(
+        "--drop-overlaps",
+        action="store_true",
+        help="exclude keystrokes flagged as contaminated (window overlaps a too-close neighbor)",
+    )
     return parser.parse_args(argv)
 
 
@@ -71,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     print(f"[run_train] {len(session_dirs)} sessions, {len(eval_ids)} held out for eval")
 
-    ds = _dataset.build_dataset(session_dirs)
+    ds = _dataset.build_dataset(session_dirs, drop_contaminated=args.drop_overlaps)
     dataset_path = os.path.join(config.DATASETS_DIR, f"{args.name}.npz")
     _dataset.save_dataset(ds, dataset_path)
     print(f"[run_train] cached dataset: {dataset_path}  (N={len(ds)})")

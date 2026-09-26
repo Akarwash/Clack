@@ -379,13 +379,13 @@ def windows_from_audio(
     return windows.astype(np.float32), onsets
 
 
-def windows_from_events(
+def events_to_windows(
     audio: np.ndarray,
     events: list[dict],
     sample_rate: int,
     meta: dict,
-) -> tuple[np.ndarray, list[str]]:
-    """Training path: cut an onset-snapped window per key event (labels known).
+) -> tuple[np.ndarray, list[str], list[int]]:
+    """Training path core: onset-snapped window, label, and onset per key event.
 
     For each ``press`` event, compute the approximate sample from the clock
     mapping, snap to the real acoustic onset within +/- ``ONSET_SEARCH_MS`` with
@@ -402,21 +402,21 @@ def windows_from_events(
     sample_rate : int
         Sample rate in Hz.
     meta : dict
-        Session metadata with ``audio_start_perf`` and ``input_latency_s`` for the
-        coarse clock mapping.
+        Session metadata with ``audio_start_perf`` and ``input_latency_s``.
 
     Returns
     -------
     tuple
-        ``(windows, labels)`` where ``windows`` has shape
-        ``(n_kept, config.WINDOW_SAMPLES)`` and ``labels`` is the list of key
-        names.
+        ``(windows, labels, onsets)`` where ``windows`` has shape
+        ``(n_kept, config.WINDOW_SAMPLES)``, ``labels`` is the key names, and
+        ``onsets`` is the snapped onset sample per kept keystroke.
     """
     audio_start = float(meta.get("audio_start_perf", 0.0))
     latency = float(meta.get("input_latency_s", 0.0))
 
     windows: list[np.ndarray] = []
     labels: list[str] = []
+    onsets: list[int] = []
     for event in events:
         if event.get("type", "press") != "press":
             continue
@@ -430,7 +430,76 @@ def windows_from_events(
             continue
         windows.append(cut_window(audio, onset))
         labels.append(key)
+        onsets.append(int(onset))
 
     if not windows:
-        return np.zeros((0, config.WINDOW_SAMPLES), dtype=np.float32), labels
-    return np.stack(windows, axis=0).astype(np.float32), labels
+        return np.zeros((0, config.WINDOW_SAMPLES), dtype=np.float32), labels, onsets
+    return np.stack(windows, axis=0).astype(np.float32), labels, onsets
+
+
+def windows_from_events(
+    audio: np.ndarray,
+    events: list[dict],
+    sample_rate: int,
+    meta: dict,
+) -> tuple[np.ndarray, list[str]]:
+    """Training path: cut an onset-snapped window per key event (labels known).
+
+    Thin wrapper over :func:`events_to_windows` returning just windows and labels.
+
+    Parameters
+    ----------
+    audio : numpy.ndarray
+        Mono float32 audio samples.
+    events : list of dict
+        Press events with ``key`` and ``t_perf``.
+    sample_rate : int
+        Sample rate in Hz.
+    meta : dict
+        Session metadata for the coarse clock mapping.
+
+    Returns
+    -------
+    tuple
+        ``(windows, labels)``.
+    """
+    windows, labels, _ = events_to_windows(audio, events, sample_rate, meta)
+    return windows, labels
+
+
+def flag_close_onsets(
+    onsets: list[int],
+    sample_rate: int,
+    isolation_ms: Optional[float] = None,
+) -> list[bool]:
+    """Flag keystrokes whose window overlaps a neighbor's (contaminated).
+
+    A keystroke is flagged when its nearest neighbor press-onset is closer than
+    ``isolation_ms`` (default ``config.CLEAN_ISOLATION_MS``), meaning the 200ms
+    windows overlap and an adjacent transient (the previous key's release or the
+    next key's press) bleeds into this window. These points can be dropped or
+    reviewed before training.
+
+    Parameters
+    ----------
+    onsets : list of int
+        Snapped onset samples, in event order.
+    sample_rate : int
+        Sample rate in Hz.
+    isolation_ms : float or None, optional
+        Minimum clean spacing; defaults to ``config.CLEAN_ISOLATION_MS``.
+
+    Returns
+    -------
+    list of bool
+        ``True`` where the keystroke is contaminated by a too-close neighbor.
+    """
+    iso = config.CLEAN_ISOLATION_MS if isolation_ms is None else isolation_ms
+    gap = int(sample_rate * iso / 1000.0)
+    n = len(onsets)
+    flags = [False] * n
+    for i in range(n):
+        prev_close = i > 0 and (onsets[i] - onsets[i - 1]) < gap
+        next_close = i < n - 1 and (onsets[i + 1] - onsets[i]) < gap
+        flags[i] = bool(prev_close or next_close)
+    return flags
