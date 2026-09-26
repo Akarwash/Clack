@@ -6,63 +6,94 @@ snapped to the acoustic onset later (see :mod:`clack.segment`).
 
 Security note: this listener is used ONLY during training. In attack mode the
 pynput listener is never instantiated (``config.ATTACK_DISABLES_KEYLOGGER``);
-this is what makes the attack provably microphone-only.
+that is what makes the attack provably microphone-only.
 
 Owner: BUILD_TRAINER.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable, Optional
+import time
+from typing import Optional
+
+import config
 
 
-@dataclass
-class KeyEvent:
-    """A single keyboard press.
+def _normalize_key(key: object) -> Optional[str]:
+    """Map a pynput key object to a member of ``config.KEY_SET``, or ``None``.
 
-    Attributes
+    Parameters
     ----------
-    key : str
-        The normalized key name (a member of ``config.KEY_SET`` where possible).
-    t_perf : float
-        ``time.perf_counter()`` timestamp of the press.
-    type : str
-        Event type; always ``"press"`` for collected events.
-    """
-
-    key: str
-    t_perf: float
-    type: str = "press"
-
-
-def check_permission() -> bool:
-    """Check whether keyboard monitoring is permitted by the OS.
+    key : object
+        A ``pynput.keyboard.KeyCode`` or ``Key`` instance.
 
     Returns
     -------
-    bool
-        ``True`` if a listener can be created.
+    str or None
+        The normalized key name if it is in ``config.KEY_SET``, else ``None``.
+    """
+    # Letters and digits arrive as KeyCode with a .char attribute.
+    char = getattr(key, "char", None)
+    if char is not None:
+        lowered = char.lower()
+        if lowered in config.KEY_SET:
+            return lowered
+        return None
+    # Special keys arrive as Key.<name>; only space is in the key set.
+    name = getattr(key, "name", None)
+    if name == "space" and "space" in config.KEY_SET:
+        return "space"
+    return None
+
+
+def check_permission() -> None:
+    """Verify OS input-monitoring permission is granted.
+
+    Returns
+    -------
+    None
 
     Raises
     ------
     PermissionError
-        If accessibility/input-monitoring permission is denied.
+        If a keyboard listener cannot be created. The message states the exact
+        fix (macOS: System Settings, Privacy and Security, enable Input
+        Monitoring and Accessibility for the terminal or app).
     """
-    raise NotImplementedError("built in BUILD_TRAINER")
+    try:  # pragma: no cover - depends on host OS permissions
+        from pynput import keyboard
+
+        listener = keyboard.Listener(on_press=lambda _k: None)
+        listener.start()
+        listener.stop()
+    except Exception as exc:  # pragma: no cover - depends on host OS permissions
+        raise PermissionError(
+            "keyboard input monitoring is not permitted. On macOS, open System "
+            "Settings > Privacy and Security and enable both Input Monitoring and "
+            "Accessibility for your terminal or app, then restart it. "
+            f"(underlying error: {exc})"
+        ) from exc
 
 
 class KeyLogger:
     """Collect keyboard press events on the shared performance clock.
 
-    Parameters
-    ----------
-    on_event : callable or None, optional
-        Optional callback invoked with each :class:`KeyEvent` as it arrives.
+    Only keys in ``config.KEY_SET`` are recorded; letters and digits are
+    lowercased and the spacebar is mapped to ``"space"``. Everything else
+    (shift, backspace, modifiers) is ignored.
     """
 
-    def __init__(self, on_event: Optional[Callable[[KeyEvent], None]] = None) -> None:
-        raise NotImplementedError("built in BUILD_TRAINER")
+    def __init__(self) -> None:
+        self._events: list[dict] = []
+        self._listener = None
+
+    def _on_press(self, key: object) -> None:  # pragma: no cover - realtime
+        """Record a normalized press with a perf-counter timestamp."""
+        normalized = _normalize_key(key)
+        if normalized is not None:
+            self._events.append(
+                {"key": normalized, "t_perf": time.perf_counter(), "type": "press"}
+            )
 
     def start(self) -> None:
         """Start listening for key presses.
@@ -72,14 +103,27 @@ class KeyLogger:
         PermissionError
             If input monitoring permission is not granted.
         """
-        raise NotImplementedError("built in BUILD_TRAINER")
+        try:  # pragma: no cover - requires a real listener
+            from pynput import keyboard
 
-    def stop(self) -> list[KeyEvent]:
-        """Stop listening and return all collected events.
+            self._events = []
+            self._listener = keyboard.Listener(on_press=self._on_press)
+            self._listener.start()
+        except Exception as exc:  # pragma: no cover
+            raise PermissionError(
+                "could not start keyboard listener; grant Input Monitoring "
+                f"permission and retry (underlying error: {exc})"
+            ) from exc
+
+    def stop(self) -> list[dict]:
+        """Stop listening and return all collected press events.
 
         Returns
         -------
-        list of KeyEvent
-            Every press captured between :meth:`start` and :meth:`stop`.
+        list of dict
+            Each event has ``key``, ``t_perf``, and ``type`` keys.
         """
-        raise NotImplementedError("built in BUILD_TRAINER")
+        if self._listener is not None:  # pragma: no cover - requires a real listener
+            self._listener.stop()
+            self._listener = None
+        return list(self._events)
