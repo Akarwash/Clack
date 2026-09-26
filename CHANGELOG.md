@@ -36,6 +36,11 @@ All notable changes to Clack are documented here. The format follows
   WebSocket, defense, exposure, fleet, and status routes plus the static UI, the
   `serve.py` and `preflight.py` entry points, and `docs/api.md` with the runbook
   preflight section.
+- Frontend (`feat/frontend`): the editorial-minimal attack dashboard with the
+  INPUT SOURCES credibility bar, RAW vs CORRECTED recovered text, the five canvas
+  hero visuals on a single non-blocking render loop, the defense/exposure/fleet
+  panel, a light/dark projector theme, self-hosted fonts (no CDN), and a `/correct`
+  endpoint so the CORRECTED line uses the real local corrector live.
 
 ## [0.1.0] - 2026-09-26
 
