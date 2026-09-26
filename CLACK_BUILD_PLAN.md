@@ -26,7 +26,7 @@ The rest of the submission logistics (Devpost, demo video, pitch, deadlines) are
 
 ## 1. What Clack is
 
-**Clack is an acoustic side-channel security auditor.** It measures how vulnerable a keyboard environment is to microphone-based keystroke inference, demonstrates the leakage live, deploys an acoustic countermeasure, and quantitatively verifies that the countermeasure works. It protects sensitive typing (passwords, secrets) from being recovered through a microphone.
+**Clack is an acoustic side-channel security auditor.** It measures how vulnerable a keyboard environment is to microphone-based keystroke inference, demonstrates the leakage live, applies an acoustic countermeasure designed to reduce recoverability through nearby microphones, and quantitatively verifies the reduction. Claim what the experiments support ("under our test setup, Clack reduced recovery from X% to Y%"), not that typing is made unrecoverable in general: a more robust attacker could exist, so the honest claim is measured reduction against Clack's own attack in the tested environment.
 
 The product is a closed loop, and every plan and the pitch use this order:
 
@@ -61,6 +61,13 @@ Consequence for the build: the defense and the audit are co-primary with the att
 **Tracks to enter** (hackUMBC allows entering as many as genuinely fit): Cybersecurity Application (primary), Most Engaging Demo (the judge-types-it-collapses moment is tailor-made), and Best Entrepreneurial Idea (position as an acoustic-leakage assessment tool for security teams). Also First Overall / Second Overall as general-judge contenders. Enter Best First Time Hack only if every team member qualifies. Do not distort the project to chase sponsor prizes (Gemini, DigitalOcean, Snowflake, etc.); the one that could fit later, only if the core is done, is a data/telemetry sponsor via the audit-history layer.
 
 **Ethics and scope (non-negotiable):** this is a defensive auditing tool. It only records the team's own keyboards and consenting typists. It exploits no software and targets no person. The point judges should take away is the audit and the defense.
+
+---
+
+## 1C. The two biggest technical risks (decide these before building the demo)
+
+1. **The judge is a different typist.** The model is trained on the team's keystrokes; a judge strikes with different force, duration, and rhythm, which can wreck accuracy. Mitigations, in order: collect training data from 2 to 3 teammates (`TRAINER_MIN_TYPISTS`) on the floor keyboard; explicitly evaluate train-on-two-teammates, test-on-a-third-who-gave-zero-samples (BUILD_MODEL, BUILD_EVAL); and keep a **guaranteed demo fallback: the judge chooses the phrase, a team member types it.** That still proves a microphone-only attack because the judge controls the unknown text. Test the cross-typist case today; do not discover it at judging.
+2. **Paced training vs natural typing.** Collection is paced at 550 ms for clean isolation, but fast typing overlaps the 200 ms windows. State the guaranteed promise: **MVP threat model is typing at >= `DEMO_MIN_GAP_MS` (250 ms, about 3 to 4 keys/sec).** Show a small pace indicator or ask the judge to "type naturally, about 3 to 4 keys per second." Faster unrestricted entry is a stretch, only claimed if demonstrated.
 
 ---
 
@@ -130,19 +137,19 @@ After this scaffold plan, build in this order. Each component plan is self-conta
 | Step | Plan | Builds | Depends on | One-line DONE |
 |---|---|---|---|---|
 | 1 | **BUILD_TRAINER.md** | the monkeytype-style collector: capture, keylog, sessions, prompts, trainer endpoints and page | scaffold | trainer collects auto-labeled sessions to disk, coverage-driven |
-| 2 | **BUILD_MODEL.md** | features, dataset, the nearest-centroid baseline (floor), the CNN, training, offline attack, calibration | recordings from step 1 | baseline and CNN both recover a held-out sentence from audio (session-split) |
+| 2 | **BUILD_MODEL.md** | features, dataset, the nearest-centroid baseline (floor), the CNN, one combined model across both boards, training, offline attack | recordings from step 1 (both boards, one mic) | baseline and CNN recover a held-out sentence (session-split); the combined model works on both boards |
 | 3 | **BUILD_EVAL.md** | the metrics harness: onset recall, top-k, CER, latency, raw vs corrected, baseline vs defense delta | a model + attack | evaluate.py reports every metric on a held-out recording |
 | 4 | **BUILD_BACKEND.md** (live part) | live streaming decode, ambient calibration, attack-mode keylogger-off, correction, attack WebSocket, preflight, wiring all routes | a trained model | typing into the mic streams live guesses over the socket, keylogger provably off |
 | 5 | **BUILD_FRONTEND.md** | the editorial-minimal dashboard, the five hero visuals, RAW-vs-corrected, input-source and calibration indicators, metrics panel | the endpoints and socket | dashboard shows live recovery, metrics, and the input-source state |
 | 6 | **BUILD_DEFENSE.md** | the defense: masker + measurement, D1 Exposure Check (the audit), D2 minimum-effective adaptive masker, D3 report + fleet | a working attack + eval | exposure grades a setup, masker craters accuracy at minimum level, fleet view shows it across machines |
 
-| stretch | cross-keyboard (from BUILD_MODEL, Tier A/B) | recover on an unseen board | a solid core | attempted only after step 6; never risks the floor |
+| stretch | cross-keyboard to an UNSEEN board (from BUILD_MODEL section 8, Tier A/B) | recover on a board with zero training data | a solid core | attempted only after step 6; never risks the floor. (Supporting the team's OWN boards is core, done via the combined model in step 2.) |
 
 Submission and Devpost logistics (freeze, demo video, pitch rehearsal) are deferred to near the deadline and are not a build plan here.
 
 Note: the Clack Trainer is built first because nothing downstream can be tested without data. Steps 2 and 3 can overlap (eval builds against the model contract). BUILD_BACKEND wires the trainer and defense routes into the full server; BUILD_FRONTEND owns only the dashboard.
 
-Order priority: **lock the floor first** (steps 1 to 5: same-board live attack with the baseline as the guaranteed floor model, plus the dashboard). Then **the audit and defense** (step 6, where the 30% Security Improvement is won; D1 Exposure Check is the must-have, D2 and D3 follow if time allows). **Cross-keyboard is a stretch/bonus only, not the headline**: embedding geometry does not automatically transfer between boards, so treat it as uncertain and never let it jeopardize the same-board floor. Rules that never move: the reach never risks the guaranteed demo, UI polish never touches the decode path, the defense features never break the working attack-plus-basic-masker demo, and the baseline model is always kept working as the fallback.
+Order priority: **lock the floor first** (steps 1 to 5: same-board live attack with the baseline as the guaranteed floor model, plus the dashboard). Then **the audit and defense** (step 6, where the 30% Security Improvement is won; D1 Exposure Check is the must-have, D2 and D3 follow if time allows). **Multiple keyboards, know the difference:** supporting the team's OWN boards (blue and C3 Equalz), all captured through the one mic, is CORE work, done by training one combined model on both boards (they are in-distribution, so this is reliable; see BUILD_MODEL 8A). Generalizing to a board with ZERO training data is the separate cross-keyboard STRETCH (BUILD_MODEL section 8), uncertain because embedding geometry does not automatically transfer, and it never jeopardizes the floor. Rules that never move: the unseen-board reach never risks the guaranteed demo, UI polish never touches the decode path, the defense features never break the working attack-plus-basic-masker demo, and the baseline model is always kept working as the fallback.
 
 The trainer's terminal fallback (`scripts/collect.py`) lets you collect data on-site before the trainer page is wired.
 
@@ -190,8 +197,8 @@ Shared-token note: `ui/style.css` (owned by FRONTEND) holds the `:root` design t
 | **The Mac** | Runs everything. Built-in mic captures keystrokes, built-in speakers play the defense masker. No external mic or speaker needed. |
 
 Rules from this hardware:
-- **Pick the floor board by data, not vibes.** Early on-site, collect and train on both boards; the higher-accuracy one is the guaranteed same-keyboard demo (expect the blue board). The other is the cross-keyboard target.
-- **Train on the actual board you will demo on.** Switch type changes only the training data, not code or config.
+- **One mic for everything.** All audio, both boards, every session, is captured through the one microphone in the same spot with the same geometry. No cross-microphone concern.
+- **Both boards are core.** Collect on blue and C3 Equalz and train ONE combined model on both (BUILD_MODEL 8A), so Clack works across both boards and you can demo swapping keyboards with the same model. Per-board models are the fallback; an unseen board is the separate stretch.
 - **One machine for mic and speaker.** Co-located mic and speaker make the defense stronger (the masker easily swamps the mic). Keep the keyboard directly in front of the Mac.
 - **Capture raw audio with OS processing off** (no echo cancellation, noise suppression, auto gain).
 
@@ -204,9 +211,15 @@ clack/
   README.md  CONTRIBUTING.md  CHANGELOG.md  VERSION  LICENSE  CITATION.cff
   requirements.txt  pyproject.toml  .gitignore  conftest.py
   config.py                    # all tunables in one place
-  docs/architecture.md
+  docs/                        # project documentation, kept current as the app is built
+    architecture.md            # system design, the AUDIT->VERIFY loop, pipeline, train-vs-attack, mode separation
+    data-collection.md         # the physical operator protocol (mic placement, key-press technique, multi-keyboard) from BUILD_TRAINER 11A
+    threat-model.md            # what Clack defends against and explicitly what it does not
+    evaluation.md              # the metrics and how to reproduce the before/after table
+    runbook.md                 # demo-day operations: preflight, demo order, fallbacks, troubleshooting
+    api.md                     # HTTP + WebSocket endpoints and message formats
   data/                        # gitignored, created at runtime
-    recordings/  datasets/  models/  corpus/
+    recordings/  datasets/  models/  corpus/  reports/
   clack/
     __init__.py
     config_types.py            # dataclasses mirroring config.py
@@ -301,9 +314,12 @@ AUG_PITCH_SEMITONES = 1.0
 SPECAUG_TIME_MASK = 6
 SPECAUG_FREQ_MASK = 8
 
-# Trainer (collection)
-TARGET_SAMPLES_PER_KEY = 40     # collect until every key hits this; paper used 25, 40 is a safer floor
-TRAINER_PACED_GAP_MS = 550      # about 40*37 presses is ~15 min of paced typing
+# Trainer (collection): two independent quotas for two separate sessions
+TRAIN_SAMPLES_PER_KEY = 40      # Session A (training): collect until every key hits this
+EVAL_SAMPLES_PER_KEY = 10       # Session B (held-out eval): a SEPARATE recording, ideally a different typist
+TRAINER_PACED_GAP_MS = 550      # paced isolation for collection; the demo cadence is different (see MVP cadence)
+TRAINER_MIN_TYPISTS = 2         # collect from 2-3 people so the model is not tuned to one pair of hands
+DEMO_MIN_GAP_MS = 250           # MVP threat model: the guaranteed demo promises typing at >= this gap (~3-4 keys/sec)
 
 # Correction
 NGRAM_ORDER = 5
@@ -316,10 +332,9 @@ MASKER_BAND_HZ = (1000, 10000)   # default band; D2 tunes this to the measured k
 MASKER_LEVEL = 0.3               # default; D2 sweeps to find the minimum effective level
 MASKER_LEVEL_STEPS = [0.1, 0.2, 0.3, 0.5]   # D2 sweep: pick the lowest that hits the target
 MASKER_TARGET_RECOVERY = 0.20    # D2: lowest masking level that pushes recovery below this
-MASKER_TRIGGERED = True          # play only while typing is detected
-EXPOSURE_GRADE_BANDS = {"A": 0.15, "C": 0.35, "D": 0.60}  # recovery R thresholds; above D = F
-FLEET_HEARTBEAT_S = 10           # D3: how often a defender reports status
-FLEET_STALE_S = 30               # mark an endpoint stale after this
+MASKER_TRIGGERED = False         # Standard Shield = continuous while armed (guaranteed demo path). Triggered "Smart Shield" is a stretch, off by default (a triggered masker can fire after the identifying transient already reached the mic)
+EXPOSURE_GRADE_BANDS = {"A": 0.15, "B": 0.25, "C": 0.40, "D": 0.60}  # Clack heuristic grade by recovery R; above D = F. A project heuristic, not an industry standard
+FLEET_REPORTS_DIR = "data/reports"  # D3: each endpoint SAVES an audit report here; the dashboard reads saved reports (no live heartbeat infrastructure)
 
 # Evaluation (see BUILD_EVAL.md)
 EVAL_TOPK = [1, 3, 5]            # top-k recall levels to report
@@ -344,13 +359,16 @@ CORPUS_DIR = "data/corpus"
   "session_id": "2026-09-26T09-30-00_blue_akarsh",
   "sample_rate": 44100,
   "audio_start_perf": 12345.678,
+  "input_latency_s": 0.012,
+  "stream_time_origin": 8402.101,
   "keyboard_id": "blue",
   "typist": "akarsh",
+  "purpose": "train",
   "mode": "paced",
   "events": [{"key": "a", "t_perf": 12346.101, "type": "press"}]
 }
 ```
-Alignment: `sample_index = round((t_perf - audio_start_perf) * sample_rate)`. Audio and events share one `perf_counter` clock. Only `press` events; keys not in `KEY_SET` are dropped at dataset-build time.
+Clock mapping: do NOT assume `audio_start_perf` identifies sample zero. Record the PortAudio stream timing at start (`input_latency_s` from the stream, and `stream_time_origin`, the stream's `time` at the first callback) so the event clock can be mapped to the audio sample clock, roughly `sample_index ≈ round((t_perf - audio_start_perf - input_latency_s) * sample_rate)`. This only needs to be close: the ±`ONSET_SEARCH_MS` onset snap (BUILD_MODEL) finishes the alignment. `purpose` is `train`, `eval`, or `demo` (the three sessions). Only `press` events; keys not in `KEY_SET` are dropped at dataset-build time.
 
 **Dataset cache** at `data/datasets/<name>.npz`: `X (N, N_MELS, T) float32`, `y (N,) int64`, `classes` (strings), `meta` (JSON string).
 
@@ -360,7 +378,19 @@ Alignment: `sample_index = round((t_perf - audio_start_perf) * sample_rate)`. Au
 
 ## 10. Documentation standards (follow in every plan)
 
-Priority: the rubric rewards security-specific documentation over academically perfect docstrings. Spend doc time on the README security sections below first, then on docstrings.
+Documentation is a first-class deliverable (CyberDawgs weights it), and it lives in the `docs/` folder plus docstrings, kept current as each component is built (not written at the end). Every component plan updates the relevant `docs/` file as part of its DONE.
+
+Priority: the rubric rewards security-specific documentation over academically perfect docstrings. Spend doc time on the README security sections and the `docs/` files below first, then on docstrings.
+
+**The `docs/` folder (create the skeletons in scaffold, fill as you build):**
+- `docs/architecture.md` — system design, the AUDIT to VERIFY loop, the pipeline, the train-vs-attack segmentation split, mode separation.
+- `docs/data-collection.md` — the physical operator protocol from BUILD_TRAINER section 11A: exact mic placement, key-press technique, environment, per-typist and multi-keyboard workflow, the three sessions. This is what the team follows every collection session.
+- `docs/threat-model.md` — what Clack defends against (passive nearby mic, keystrokes over a voice channel) and explicitly what it does not (a compromised endpoint).
+- `docs/evaluation.md` — the metric definitions and how to reproduce the before/after table (from BUILD_EVAL).
+- `docs/runbook.md` — demo-day operations: run preflight, the demo order, the fallbacks (event-mode clean run, judge-picks-teammate-types), and troubleshooting.
+- `docs/api.md` — every HTTP and WebSocket endpoint with its request/response and message formats.
+
+Who fills which doc (part of each component's DONE): BUILD_TRAINER writes `data-collection.md`; BUILD_MODEL keeps `architecture.md` current for the model and segmentation; BUILD_EVAL writes `evaluation.md`; BUILD_BACKEND writes `api.md` and the preflight part of `runbook.md`; BUILD_DEFENSE writes `threat-model.md` and the before/after in `evaluation.md`; BUILD_FRONTEND adds the dashboard screenshot to the README and the demo order to `runbook.md`.
 
 - **README, security-first.** Beyond intent, install, and usage per entry point, include these sections (they attack the rubric directly): **Threat Model** (passive mic near a keyboard, or keystrokes over a voice channel; and explicitly what Clack does NOT defend against, such as a compromised endpoint that can disable the defense or read keyboard events); **User Controls** (mic choice, keyboard profile, calibration, defense toggle, masker intensity, local correction, save/delete recordings); **Data and Privacy** (everything local, where raw audio lives, attack text not persisted by default, how to wipe a session); **Known Limitations** (keyboard-specific acoustics, noisy rooms, distance, mic differences, unsupported punctuation, typist variability, fast overlapping keystrokes); **Security Evaluation** (a reproducible before/after table); **Why This Is Defensive** (consent-only training, no third-party target collection, attack used as validation); **Research Attribution** (Harrison et al., what was borrowed conceptually and what Clack adds). Plus a dashboard screenshot.
 - **CITATION.cff describes Clack itself** (the project, authors, year), not the paper. The Harrison et al. paper goes in the README Research Attribution section and `docs/architecture.md`, not in CITATION.cff.
@@ -382,7 +412,7 @@ Do exactly this, committing as you go. This is the only building this plan does.
 
 1. **Create the tree** in section 7: all folders and every module as a clean-importing stub. Each stub module has its numpydoc module docstring and declares its public functions/classes with type-hinted signatures whose bodies `raise NotImplementedError("built in <PLAN>")`. Stubs must import without error so the test harness is green.
 2. **Write `config.py`** exactly as section 8, and `config_types.py` with dataclasses mirroring it (so other modules can import typed config).
-3. **Write the docs and metadata:** README (intent, the security sections from section 10 as headed placeholders, the ethics note, install and screenshot placeholders), CONTRIBUTING, CHANGELOG (with an `Unreleased` section), VERSION (`0.1.0`), LICENSE (MIT), CITATION.cff describing **Clack itself** (not the paper; the paper goes in the README Research Attribution section), docs/architecture.md (put the section 2 mental model, the AUDIT to VERIFY loop, and the pipeline sketch here).
+3. **Write the docs and metadata:** README (intent, the security sections from section 10 as headed placeholders, the ethics note, install and screenshot placeholders, and links to the `docs/` files), CONTRIBUTING, CHANGELOG (with an `Unreleased` section), VERSION (`0.1.0`), LICENSE (MIT), CITATION.cff describing **Clack itself** (not the paper; the paper goes in the README Research Attribution section). Create the full `docs/` folder with headed skeletons for every file listed in section 10 (`architecture.md`, `data-collection.md`, `threat-model.md`, `evaluation.md`, `runbook.md`, `api.md`); put the section 2 mental model, the AUDIT to VERIFY loop, and the pipeline sketch into `architecture.md` now, and leave the others as headed stubs the component plans fill.
 4. **Write `requirements.txt`** listing: torch, torchaudio, numpy, scipy, librosa, soundfile, sounddevice, pynput, fastapi, "uvicorn[standard]", websockets, httpx, pytest, pytest-cov, pytest-asyncio, hypothesis, matplotlib, nltk. After the environment installs, freeze exact versions back into this file. Also vendor the frontend fonts and any JS libs into `clack/ui/fonts/` and `clack/ui/vendor/` (download once now) so the UI needs no network at demo time.
 5. **Write `pyproject.toml`** with pytest config:
    ```toml
@@ -391,7 +421,7 @@ Do exactly this, committing as you go. This is the only building this plan does.
    addopts = "-q --cov=clack --cov-report=term-missing"
    ```
 6. **Write `.gitignore`**: `data/`, `plans/`, `__pycache__/`, `*.pyc`, `.venv/`, `.pytest_cache/`, `.coverage`, `*.pt`, `*.npz`, `*.wav`. (`plans/` holds these build-plan markdown files, local working notes, never committed.) Do NOT use `.gitkeep` files inside `data/`, they conflict with this ignore rule.
-7. **Create the runtime data dirs at runtime, not in git.** A helper `ensure_dirs()` (in `config_types.py`), invoked at startup by the server and the scripts, runs `os.makedirs(..., exist_ok=True)` for `data/recordings`, `data/datasets`, `data/models`, `data/corpus`. The dirs are never tracked; they are created when the app runs. This resolves the gitignore conflict cleanly.
+7. **Create the runtime data dirs at runtime, not in git.** A helper `ensure_dirs()` (in `config_types.py`), invoked at startup by the server and the scripts, runs `os.makedirs(..., exist_ok=True)` for `data/recordings`, `data/datasets`, `data/models`, `data/corpus`, `data/reports`. The dirs are never tracked; they are created when the app runs. This resolves the gitignore conflict cleanly.
 8. **Write `conftest.py`** with shared fixtures (a `tmp_session` factory that writes a tiny synthetic `audio.wav` + `events.json`, and a `device` fixture returning the detected torch device).
 9. **Write one real passing test** (`tests/test_config.py`): assert every `clack` module imports, and assert `config.WINDOW_SAMPLES == 8820` and `config.SPEC_FRAMES` matches `WINDOW_SAMPLES // HOP_LENGTH + 1` (both are real attributes, not comments).
 10. **Initialize git**, make the first commit, then commit after each step above (several small commits, not one). All commits must fall inside the hackathon window (see section 0A).
@@ -411,7 +441,12 @@ Do exactly this, committing as you go. This is the only building this plan does.
 - Claim search-space collapse for passwords, not always-exact recovery.
 - Validate and demo on a SEPARATE recording session from training (never a random split of one session).
 - Keep the nearest-centroid baseline working at all times as the fallback model.
-- The cross-keyboard reach is a stretch and never blocks the guaranteed same-keyboard demo.
+- **Standard Shield (continuous masker while armed) is the guaranteed defense;** the triggered "Smart Shield" is a stretch, because a triggered masker can fire after the identifying transient already reached the mic.
+- Test the cross-typist case (train on two teammates, test on a third) before relying on "judge types it live"; the guaranteed fallback is the judge picks the phrase and a teammate types it.
+- State the MVP cadence (typing at >= 250 ms gaps); do not claim unrestricted fast typing unless demonstrated.
+- Exposure grades are a labeled Clack heuristic, not an industry standard.
+- Supporting the team's own keyboards (one combined model on both, one mic) is core; only generalizing to an UNSEEN board is the stretch, and it never blocks the guaranteed demo.
+- D3 (multi-endpoint view) reads saved audit reports, not live heartbeats, and is the first thing to cut if behind.
 - UI polish never touches the decode path.
 - Never skip the audit and defense. They win the 30% Security Improvement.
 

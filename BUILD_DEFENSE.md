@@ -41,8 +41,9 @@ Interface:
 
 ## 4. Measurement (the honest before/after)
 
-- `measure(model, text, masker) -> {"off_acc", "on_acc", "off_cer", "on_cer", "delta"}`: type a fixed known `text` with the masker off, run the attack, compute recovery; repeat with the masker on; return both plus the delta. Use `evaluate.py` (BUILD_EVAL) for the actual metrics (top-1, CER) so the numbers match everywhere. Type the SAME fixed text both times, from a session not used in training.
-- Report the real measured drop. A believable "accuracy fell from X to near chance" beats an unbelievable "100 percent blocked."
+- `measure(model, text, masker) -> {"off_acc", "on_acc", "off_cer", "on_cer", "delta", "masker_key_ratio_db"}`: type a fixed known `text` with the masker off, run the attack, compute recovery; repeat with the masker on; return both plus the delta. Use `evaluate.py` (BUILD_EVAL) for the actual metrics (top-1, CER) so the numbers match everywhere. Type the SAME fixed text both times, from a session not used in training.
+- **Report the masker level as received at the mic, not just the digital amplitude.** `MASKER_LEVEL=0.3` means nothing without the speaker volume, so measure RMS at the microphone: keystroke RMS (dBFS), masked-environment RMS (dBFS), and the effective masker-to-keystroke ratio in dB (for example "keys -31 dBFS, masked -19 dBFS, +12 dB"). This makes the result reproducible and credible, and it is what you show, not the raw `0.3`.
+- Report the real measured drop under your test setup. A believable "recovery fell from X% to Y% at a +N dB masker ratio" beats "100 percent blocked".
 
 **DONE (base):** the masker plays and stops cleanly, and `measure()` returns off vs on accuracy over the same text with a clear drop.
 
@@ -56,7 +57,7 @@ A one-button "am I vulnerable?" assessment. This is what turns Clack from an att
 - `check_exposure(model, sample_session) -> dict`: take a short typing sample (recorded via the trainer flow or a quick record), and compute:
   - **Recovery:** run the real attack on the sample, character accuracy `R` (how much an attacker would recover).
   - **Signal metrics:** keystroke SNR (onset energy over the noise floor) and per-key distinguishability (mean classifier confidence or embedding separation).
-  - **Grade:** map exposure to A to F, where more recoverable is worse. Suggested bands: `R < 0.15` = A (low risk), `0.15 to 0.35` = B/C, `0.35 to 0.6` = D, `> 0.6` = F (highly exposed). Combine with SNR so a loud, distinct keyboard is flagged even before a full attack.
+  - **Grade (the "Clack Exposure Grade"):** map exposure to A to F by recovery `R` using `EXPOSURE_GRADE_BANDS` = {A: 0.15, B: 0.25, C: 0.40, D: 0.60} (above D is F), combined with SNR so a loud, distinct keyboard is flagged even before a full attack. Label it clearly as a Clack heuristic based on measured recoverability, NOT an industry cybersecurity rating, on the UI and in the README. Include the B band (do not skip it).
   - **Reasons:** concrete strings, for example "the attack recovered 82% of your text", "your keystrokes are loud and distinct (high SNR)", "microphone is close to the keyboard".
   - **Recommendations:** enable the masker, move the mic away, use a quieter switch, avoid typing secrets on video calls.
 - Return `{grade, recovery, snr, reasons: [...], recommendations: [...]}`.
@@ -73,59 +74,61 @@ Tests (`test_exposure.py`): on a synthetic high-recovery sample the grade is poo
 
 ## 6. D2: Adaptive, minimum-effective masker (upgrade `defense.py`)
 
-Make the masker something a person would actually leave running, and turn it into a real usability-vs-security result.
-- **Minimum-effective level (the headline).** `find_min_effective_level(model, text)`: sweep `MASKER_LEVEL_STEPS` ([0.1, 0.2, 0.3, 0.5]); for each level, measure attack recovery (via `evaluate`); pick the LOWEST level whose recovery falls below `MASKER_TARGET_RECOVERY` (0.20). Report it: "reduced recovery from 84% to 13% at the minimum effective masking level." This directly answers the rubric line that protection should preserve normal function with minimal friction, and it is far more interesting than "play loud noise".
-- **Trigger-based:** the masker plays only while typing is detected (reuse the onset detector on the live mic), silent when idle. No constant noise.
-- **Adaptive band:** `measure_keyboard_band(sample) -> (low, high)`: find the dominant keystroke energy band and tune the masker to cover exactly that band instead of the fixed default.
-- **Profile-matched decoys:** shape the fake keystroke transients from the user's own keyboard profile so decoys are hard to tell from real presses.
+Make the masker something a person would actually leave running, and turn it into a real usability-vs-security result. Two shield modes:
 
-Interface additions: `Masker.set_level(v)`, `Masker.set_band(low, high)`, `Masker.set_trigger(enabled)`, `find_min_effective_level(...)`, and an activity detector that gates playback.
+- **Standard Shield (the guaranteed defense): continuous masker while "Protected Typing" is armed.** The masker is already running before the user types, so no identifying transient reaches the mic unmasked. This is the guaranteed demo path: arm the shield, then type. Do NOT make triggering part of the guaranteed path.
+- **Smart Shield (stretch): triggered masking** that plays only while typing is detected, for lower friction. This is an optimization, off by default (`MASKER_TRIGGERED=False`), because a triggered masker can fire after the press onset has already been captured. Build it only after Standard Shield works.
 
-Why it scores: lowest-effective masking is both a security result and a usability result, which is exactly the "minimal friction" criterion.
+Upgrades that apply to Standard Shield:
+- **Minimum-effective level (the headline).** `find_min_effective_level(model, text)`: sweep `MASKER_LEVEL_STEPS` ([0.1, 0.2, 0.3, 0.5]); for each level, measure attack recovery (via `evaluate`); pick the LOWEST level whose recovery falls below `MASKER_TARGET_RECOVERY` (0.20). Report it: "reduced recovery from 84% to 13% at the minimum effective masking level." This answers the rubric line that protection should preserve normal function with minimal friction.
+- **Adaptive band:** `measure_keyboard_band(sample) -> (low, high)`: find the dominant keystroke energy band and tune the masker to cover exactly that band.
+- **Profile-matched decoys:** shape the fake keystroke transients from the user's own keyboard profile.
 
-Tests: the sweep picks the lowest level meeting the target on a synthetic recovery curve; the tuned band covers the measured keyboard energy; trigger gating starts and stops playback with detected activity.
+Interface additions: `Masker.set_level(v)`, `Masker.set_band(low, high)`, `Masker.set_trigger(enabled)` (default off), `find_min_effective_level(...)`, and an activity detector for the stretch trigger.
 
-**DONE (D2):** the masker auto-triggers on typing and is tuned to the measured keyboard band, and the before/after drop is still measured with it on.
+Tests: the sweep picks the lowest level meeting the target on a synthetic recovery curve; the tuned band covers the measured keyboard energy; Standard Shield is continuous while armed.
+
+**DONE (D2):** Standard Shield (continuous) craters the measured recovery at the minimum effective level, with the mic-level dB ratio reported. Smart Shield (triggered) is optional.
 
 ---
 
-## 7. D3: Effectiveness report and multi-endpoint status
+## 7. D3: Effectiveness report and multi-endpoint view (lowest priority, first to cut)
 
-Sell "deployable across an organization" concretely, not as a claim.
-- **Effectiveness report:** the defense panel shows measured off vs on accuracy, the current protection state (on/off, adaptive band, trigger mode), and the latest Exposure Check grade.
-- **Multi-endpoint status (a minimal fleet view):** each running defender periodically posts a heartbeat, and the dashboard lists the machines and whether each is protected.
-  - `POST /fleet/heartbeat` body `{machine_id, protected: bool, grade?: str}` -> `{ok: true}`; keep an in-memory registry with `last_seen`.
-  - `GET /fleet` -> `[{machine_id, protected, grade, last_seen}]`.
-  - For the demo, run the defender on two or three team laptops so the fleet view shows real machines. Honest scope: this demonstrates scale across endpoints, not high request throughput.
+Sell "deployable across an organization" without building distributed infrastructure. Keep it simple; if behind, cut D3 first. Cyber judges care far more about working attack -> measured vulnerability -> working defense -> measured improvement than about a live fleet.
+- **Effectiveness report:** the defense panel shows measured off vs on recovery, the mic-level masker ratio, the current protection state (Standard/Smart, adaptive band, min level), and the latest Clack Exposure Grade.
+- **Multi-endpoint view (saved reports, not live heartbeats):** each endpoint's audit run SAVES a report JSON to `FLEET_REPORTS_DIR` (`data/reports/`); the dashboard reads and lists those saved reports. No heartbeat service, no in-memory registry.
+  - Report file: `{machine_id, grade, off_recovery, on_recovery, masker_ratio_db, timestamp}`.
+  - `GET /fleet` -> the list of saved reports read from disk.
+  - For the demo, run the audit on two or three team laptops and drop their report files in; the dashboard shows them. Say the architecture could support live fleet reporting later; do not build it now.
 
-Tests: `POST /fleet/heartbeat` then `GET /fleet` round-trips a machine's status; stale entries are marked.
+Tests: writing two report files then `GET /fleet` returns both, newest first.
 
-**DONE (D3):** the dashboard shows measured protection, the current protection state, and a status view listing two or more machines.
+**DONE (D3):** the dashboard lists saved audit reports from two or more machines. This is the first feature to cut if time is short.
 
 ---
 
 ## 8. Server and UI integration
 
 Routes (defined here, wired in `server.py`):
-- `POST /defense/on`, `POST /defense/off` (adaptive masker), `GET /defense/measure`.
+- `POST /defense/on`, `POST /defense/off` (Standard Shield: continuous masker while armed), `GET /defense/measure`.
 - `POST /exposure/check`, `GET /exposure/last`.
-- `POST /fleet/heartbeat`, `GET /fleet`.
+- `GET /fleet` (reads saved report files from `data/reports/`).
 
 Dashboard defense panel (built in `app.js` per BUILD_FRONTEND, against these contracts):
-- An Exposure Check button that shows the grade (big A to F), the reasons, and the recommendations.
-- A masker toggle showing the adaptive band and trigger state.
-- The before/after accuracy bars, animating the "on" bar cratering when the masker turns on.
-- The fleet status list.
+- An Exposure Check button that shows the Clack Exposure Grade (big A to F, labeled a heuristic), the reasons, and the recommendations.
+- A "Protected Typing" toggle (Standard Shield, continuous) showing the min level and adaptive band; a Smart Shield switch if the stretch is built.
+- The before/after recovery bars plus the mic-level masker ratio (dB), animating the "on" bar cratering.
+- The saved-reports list.
 
 ---
 
 ## 9. Demo moment (about two of three minutes on defense)
 
-1. Attack, fast (about 45s): a judge types, Clack recovers it live from sound. "This is the threat, and it is real: 93% over a Zoom call in the research."
-2. Exposure Check (about 30s): run it on that sample, show the F grade and the reasons. "Any org can run this on every laptop to find who is exposed."
-3. Turn on protection (about 45s): flip the adaptive masker, the judge types the same thing, the recovered text turns to garbage and the accuracy bar craters. "Protection kicks in only while you type, tuned to your keyboard."
-4. Fleet view (about 20s): show the defender running on two or three machines. "Deployable across every endpoint in an organization."
-Close on the before/after bars and the fleet: "A measured, deployable defense against acoustic surveillance."
+1. Attack, fast (about 45s): a judge picks a phrase and types it (or a teammate types the judge's phrase, the guaranteed fallback), Clack recovers it live from sound. "This is the threat, and it is real: 93% over a Zoom call in the research."
+2. Exposure Check (about 30s): run it on that sample, show the grade and the reasons. "Any org can run this on every laptop to find who is exposed."
+3. Arm Protected Typing (about 45s): the continuous Standard Shield is on before typing; type the same phrase, the recovered text turns to garbage and the recovery bar craters. "The shield is running before you type, at the minimum effective level, a plus-N-dB masker ratio at the mic."
+4. Saved reports (about 20s): show audit reports from two or three machines. "Run the audit across every endpoint in an organization."
+Close on the before/after bars: "Under our test setup, Clack cut recovery from X% to Y%. A measured audit-and-mitigate loop against acoustic leakage."
 
 ---
 
@@ -135,14 +138,15 @@ Close on the before/after bars and the fleet: "A measured, deployable defense ag
 |---|---|
 | Masker barely dents accuracy | Raise `MASKER_LEVEL`, re-tune the adaptive band onto the measured keystroke band, add more decoys; confirm OS audio processing is off so the masker is actually recorded. |
 | Exposure grade looks random | Base it primarily on real attack recovery `R`, with SNR as a tiebreaker; calibrate the bands on a couple of known samples. |
-| Trigger gating cuts masking late (first keystrokes leak) | Start masking on the first detected onset and keep a short hangover; for the demo, pre-arm the masker just before typing. |
-| Fleet view empty on stage | Pre-start the defender on the other laptops; mark stale heartbeats but keep last-known status visible. |
-| Both measurement runs look the same | Same fixed `text` both times, identical model and mic settings. |
+| First keystrokes leak (with the stretch Smart Shield) | Use Standard Shield (continuous while armed) for the guaranteed demo; the masker is already running before typing, so nothing leaks. Smart Shield stays a stretch. |
+| Fleet view empty on stage | Pre-place the saved report files in `data/reports/`; the dashboard reads whatever is there. |
+| Both measurement runs look the same | Same fixed `text` both times, identical model and mic settings, from a non-training session. |
 
 ## 11. DONE for the defense component
 
-- Base masker plus measurement work (section 4).
-- D1 Exposure Check returns a real risk grade with reasons and recommendations.
-- D2 adaptive, trigger-based masker tunes to the keyboard and plays only while typing.
-- D3 effectiveness report and a two-plus machine fleet view work live.
+- Base masker plus measurement work (section 4), reporting the mic-level masker-to-key ratio in dB.
+- D1 Exposure Check returns a labeled Clack Exposure Grade (A to F, including B) with reasons and recommendations.
+- D2 Standard Shield (continuous) craters recovery at the minimum effective level; Smart Shield (triggered) is optional.
+- D3 shows saved audit reports from two or more machines (first to cut if behind).
 - The defense demo runs end to end and occupies about two thirds of the three-minute demo.
+- `docs/threat-model.md` and the before/after table in `docs/evaluation.md` are written.

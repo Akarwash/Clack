@@ -21,7 +21,7 @@ Covers files: `capture.py`, `keylog.py`, `prompts.py`, `session.py`, `stream.py`
 - `list_input_devices() -> list[dict]`: wrap `sounddevice.query_devices`, return index, name, channels, default sample rate. Used at setup to pin `INPUT_DEVICE`.
 - `class Recorder`:
   - `__init__(sr=SAMPLE_RATE, device=INPUT_DEVICE, channels=CHANNELS)`.
-  - `start()`: open an `InputStream` with a callback that pushes frames to a `queue.Queue`; record `self.audio_start_perf = time.perf_counter()` at the first callback (not at open). Raise a clear error if the device cannot open.
+  - `start()`: open a raw `InputStream` (no OS processing) with a callback that pushes frames to a `queue.Queue`; at the first callback record `self.audio_start_perf = time.perf_counter()`, `self.input_latency_s` (the stream's input latency), and `self.stream_time_origin` (the callback's `inputBufferAdcTime`) so the event clock maps to the sample clock without assuming sample zero (see BUILD_TRAINER section 5 and master section 9). Raise a clear error if the device cannot open.
   - `read_all() -> np.ndarray`: drain the queue into one float32 mono array.
   - `stop()`: close the stream.
   - `class StreamReader` (for live attack): exposes a rolling buffer of the last `N` seconds via a lock, for `stream.py` to poll.
@@ -134,3 +134,4 @@ Tests (`test_server.py`, httpx + FastAPI `TestClient` + `pytest-asyncio`): `GET 
 ## 10. DONE for the backend
 
 - `serve.py` starts; `/trainer` collects auto-labeled sessions; the live attack runs with ambient calibration and the pynput listener provably not instantiated in attack mode; `/` streams live predictions over the WebSocket; `/status` and `preflight.py` report full readiness; correction runs locally with no network; all `test_server.py` tests pass.
+- `docs/api.md` (all endpoints and WebSocket message formats) and the preflight section of `docs/runbook.md` are written.

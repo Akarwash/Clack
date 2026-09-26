@@ -119,7 +119,7 @@ An editorial grid of panels, hairline-separated. Suggested layout on desktop:
 - **Row 3, left (7 cols): Keyboard.** A clean line-art on-screen keyboard; the guessed key flashes (fill fades from `--accent` back to transparent over ~400ms), tinted by confidence. This is the "it is reading my mind" moment.
 - **Row 3, right (5 cols): Two modes:**
   - **Password mode:** the **search-space collapse** number in `--t-hero` mono, animating from a huge value down to the surviving candidate count, with a thin bar underneath.
-  - **Defense panel:** a toggle (`Masker off / on`), the measured **before/after** accuracy as two thin bars (the "on" bar craters on toggle), the **minimum effective masking level** chosen, and the latest **Exposure Check** grade (A to F).
+  - **Defense panel:** a **Protected Typing** toggle (Standard Shield, continuous while armed), the measured **before/after** recovery as two thin bars (the "on" bar craters), the **minimum effective masking level** and the **mic-level masker-to-key ratio (dB)**, the latest **Clack Exposure Grade** (A to F, labeled a heuristic, not a standard), and a small list of **saved audit reports** from other machines (read from disk, not live heartbeats).
 - **Top-right controls:** `Start attack` / `Stop`, a model selector (baseline / CNN), and a `Clean run` switch (event mode) for the guaranteed demo.
 
 ---
@@ -173,3 +173,4 @@ All drawn on `<canvas>` with a single shared render loop. No heavy library is re
 - The dashboard matches the editorial-minimal design system (paper background, hairlines, mono data, one accent), with self-hosted fonts and no network at load.
 - It shows the INPUT SOURCES bar (mic active, keyboard events disabled, ambient calibrated), RAW next to CORRECTED text, the metrics readout, and all five hero visuals live, driven by the WebSocket on a single rAF loop that never blocks the decode, with a working light/dark toggle.
 - (The trainer page's DONE is in BUILD_TRAINER.)
+- The dashboard screenshot is added to the README and the demo order is written into `docs/runbook.md`.

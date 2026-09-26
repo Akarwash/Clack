@@ -20,7 +20,8 @@ Outputs: a trained model at `data/models/<name>/` (`model.pt`, `config.json`, `m
 ## 2. Data requirements
 
 - **Classes:** `KEY_SET` from config: `a-z`, `0-9`, and `space` (37 classes) to start.
-- **Samples per key:** collect until every key reaches `TARGET_SAMPLES_PER_KEY` (40; the paper used 25, so 40 is a safe floor). At the 550 ms paced interval, 40 x 37 is about 15 minutes of typing, split across the team. The trainer is coverage-driven and auto-stops when the target is met (see BUILD_TRAINER). Do not chase huge totals; 40 per key is enough to start, more helps the cross-keyboard stretch.
+- **Samples per key and sessions:** three separate recordings (see BUILD_TRAINER section 11). Session A (train) to `TRAIN_SAMPLES_PER_KEY` (40) from 2 to 3 typists; Session B (eval, held out) to `EVAL_SAMPLES_PER_KEY` (10), ideally a different typist who gave zero training samples; Session C (demo) a natural phrase. Train on A, evaluate on B, demo on C. Never a random split of one session.
+- **Cross-typist is the biggest risk:** explicitly evaluate train-on-two-teammates, test-on-a-third-who-contributed-zero-samples. If that falls apart, the guaranteed demo fallback is the judge picks the phrase and a trained teammate types it (still a mic-only attack). Decide this from real numbers, early.
 - **Balance:** the trainer's balanced sequence keeps per-key counts even. Still compute and log per-key counts before training and warn on any key with fewer than 40 samples.
 - **Multiple typists:** collect from two or three people so the model is not tuned to one person's hands. Note honestly that the on-stage typist should be represented in training for the strongest result.
 - **Per board:** collect a separate dataset per physical keyboard (blue board, C3 Equalz board). The model learns a board's acoustic signature.
@@ -48,11 +49,11 @@ Factor the actual onset-finding and window-cutting into one shared helper (`find
 `features.log_mel(window, sr) -> np.ndarray`:
 - `librosa.feature.melspectrogram` with `n_fft=N_FFT` (1024), `hop_length=HOP_LENGTH` (256), `n_mels=N_MELS` (64), `fmin=FMIN` (0), `fmax=FMAX` (22050).
 - Convert to dB: `librosa.power_to_db(mel, ref=np.max)`.
-- Fix time dimension: pad or trim to `T` frames (for an 8820-sample window at hop 256, `T ≈ 35`). Store `T` in config once computed.
-- Per-sample normalization: z-score (subtract mean, divide by std over the whole image). This is what lets the model generalize across recording levels.
-- Output shape `(N_MELS, T)` = `(64, 35)`, float32.
+- Fix time dimension: pad or trim to exactly `config.SPEC_FRAMES` frames, so the output shape is guaranteed regardless of the STFT's centering/padding behavior. `SPEC_FRAMES` is the config formula; `features.py` enforces it by padding/trimming, so the formula and the real output always agree.
+- **Normalization: per-sample z-score** (subtract mean, divide by std over that single image). Because it is per-sample, there is no cross-sample statistic and therefore no train/val leakage. If you ever switch to dataset-wide normalization, fit the mean/std on the TRAINING split only, save them to `data/models/<name>/norm.json`, and reuse exactly those values for validation and live inference. Never fit normalization on train+val before splitting.
+- Output shape `(N_MELS, SPEC_FRAMES)` = `(64, ~35)`, float32.
 
-Tests (`test_features.py`): output is always `(64, T)`, finite, deterministic for a fixed input. Use Hypothesis over window lengths to confirm pad/trim always yields `T`.
+Tests (`test_features.py`): assert the ACTUAL output shape, not just the formula: `features.log_mel(np.zeros(WINDOW_SAMPLES), SAMPLE_RATE).shape == (N_MELS, SPEC_FRAMES)`. Also finite and deterministic for a fixed input; Hypothesis over window lengths confirms pad/trim always yields `SPEC_FRAMES`.
 
 ---
 
@@ -118,7 +119,7 @@ Procedure, all seeded from `config.SEED`:
 5. Scheduler: `ReduceLROnPlateau` on val loss (factor 0.5, patience 3).
 6. Train up to `EPOCHS=60` with early stopping (`EARLY_STOP_PATIENCE=8`) on val loss; keep the best weights.
 7. After training, on the val split compute: overall accuracy, **per-key accuracy**, **top-3 accuracy**, and a confusion matrix.
-8. Save to `data/models/<name>/`: `model.pt` (state dict), `config.json` (the snapshot), `metrics.json` (all of the above plus the loss curve), and `confusion_matrix.png`.
+8. Save to `data/models/<name>/`: `model.pt` (state dict), `config.json` (the snapshot), `metrics.json` (all of the above plus the loss curve), `confusion_matrix.png`, and `norm.json` if any global normalization is used (per-sample z-score needs none).
 9. Print a one-screen summary: overall acc, top-3 acc, the five worst keys, and the loss curve length.
 
 Tests (`test_model.py`): forward and embed return correct shapes on a synthetic batch; one optimizer step reduces loss on a tiny overfit batch. Never train a real model inside a test.
@@ -128,13 +129,30 @@ Tests (`test_model.py`): forward and embed return correct shapes on a synthetic 
 ## 7. Inference and evaluation (`attack.py`, `scripts/run_attack.py`)
 
 - `attack_wav(path, model) -> list[dict]`: run `detect_onsets`, cut windows, featurize, classify, return per keystroke `{index, topk: [(key, prob), ...], best: key}`. Works with either `CentroidBaseline` or `ClackCNN` via the shared predict interface.
-- **Metrics come from `evaluate.py` (BUILD_EVAL).** Do not hand-roll metrics here. `run_attack.py` calls `evaluate.evaluate_attack` on a held-out session (different from training) and prints the full report: onset recall, raw top-1, top-k recall, CER, median latency, and raw vs language-corrected. Also run `evaluate.compare_models` for the baseline-vs-CNN line.
+- **Metrics come from `evaluate.py` (BUILD_EVAL).** Do not hand-roll metrics here. `run_attack.py` calls `evaluate.evaluate_attack` on the held-out Session B (and Session C for the demo phrase) and prints the full report: onset recall, raw top-1, top-k recall, CER, median latency, and raw vs language-corrected. Also run `evaluate.compare_models` for the baseline-vs-CNN line, and report the **cross-typist** number (train on A's two typists, test on B's third typist) as its own figure, since that is what the judge demo really is.
 - **Password evaluation (the honest number):** report top-k recall and the combined top-3-per-position search-space size (`product over positions of min(3, candidates)`), framed as "we reduced the space from X to N", not guaranteed exact recovery. At 95% per-key a 12-char password is fully correct about 54% of the time; when it is not, top-3 per position collapses the space to a handful.
 - Never display an accuracy number you cannot reproduce live, and always show raw next to corrected so no one thinks the language model did all the work.
 
 ---
 
-## 8. Cross-keyboard (`calibrate.py`)
+## 8A. Multiple keyboards, KNOWN boards (core work, one mic)
+
+Goal: Clack works across the team's multiple keyboards (blue and C3 Equalz), all captured through the one mic. Because both boards are in the training data, this is in-distribution and reliable, NOT the uncertain cross-keyboard problem in section 8 (that is a board with zero training data). Two ways, recommend the combined model:
+
+**Recommended: one combined model trained on all target boards.**
+- Collect training and eval sessions on BOTH boards through the one mic (BUILD_TRAINER 11A/11 workflow). This is core work now, not a stretch.
+- Build ONE dataset that mixes both boards' recordings; the classes are still just the keys (not board-key pairs), so the model learns each key's sound across both boards' acoustics. Keep the per-sample `keyboard_id` so you can report per-board accuracy.
+- Train one model on the combined set. It works on either board because it saw both. Evaluate on a held-out session from EACH board and report both numbers.
+- Demo payoff: "read this keyboard, now swap to a totally different keyboard, same model, still works." That is the clearest possible proof of multi-keyboard support.
+- Honest tradeoff: the combined model may be a point or two lower per board than a dedicated model, in exchange for one model that spans both and a much better demo.
+
+**Fallback: per-board models.** If the combined model underperforms on one board, train one model per board (`blue-v1`, `c3equalz-v1`) and let the dashboard model selector load the one for the board on the table. Same pipeline, only the training data and saved name differ. Keep both on disk.
+
+**Not this, for known boards:** the cross-keyboard calibration in section 8 is for an UNSEEN board (no training data). Do not use it to support boards you own; collect them and use the combined (or per-board) model.
+
+---
+
+## 8. Cross-keyboard, one model on an UNSEEN board (`calibrate.py`, stretch)
 
 Goal: recover text from a board the model never trained on. Two tiers, Tier A is the floor.
 
@@ -170,3 +188,4 @@ Tests (`test_calibrate.py`): prototypes have shape `(EMBED_DIM,)`; nearest-proto
 - `run_train.py` produces a same-keyboard model with strong per-key and top-3 accuracy, saved with metrics and a confusion matrix.
 - `run_attack.py` recovers a held-out sentence (reported accuracy) and prints password top-k candidates, from audio only.
 - `calibrate.py` recovers text on an unseen board after a short calibration string (Tier A). Tier B attempted and reported honestly, pass or fail.
+- `docs/architecture.md` is updated for the model, the onset-snap segmentation, and the per-board multi-keyboard strategy.
