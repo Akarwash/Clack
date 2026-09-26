@@ -4,13 +4,146 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Clack Trainer</title>
-  <!-- Links style.css for :root design tokens only (read-only). Trainer-specific
-       styles stay inline here so no two agents edit style.css. Built in BUILD_TRAINER. -->
+  <!-- Links style.css for the :root design tokens only (owned by BUILD_FRONTEND,
+       read-only here). Trainer-specific styles stay inline so no two agents edit
+       style.css. System fonts are the fallback so the page loads with no network
+       until BUILD_FRONTEND vendors the self-hosted fonts. -->
   <link rel="stylesheet" href="style.css" />
+  <style>
+    :root {
+      /* Fallbacks used until BUILD_FRONTEND fills style.css tokens. */
+      --paper: #f4f1ea;
+      --ink: #1a1a17;
+      --line: #cfc9bd;
+      --accent: #b4472e;
+      --good: #3f6f4f;
+      --muted: #8a8478;
+      --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 24px 64px; }
+    header { display: flex; align-items: baseline; justify-content: space-between; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+    header h1 { font-size: 18px; letter-spacing: 0.02em; margin: 0; font-weight: 600; }
+    header .sub { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+    .micro { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 4px; }
+    .setup { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-end; margin: 24px 0; }
+    .setup .field { display: flex; flex-direction: column; }
+    .setup input, .setup select {
+      background: transparent; border: 1px solid var(--line); color: var(--ink);
+      font-family: var(--mono); font-size: 14px; padding: 8px 10px; min-width: 120px;
+    }
+    .seg { display: inline-flex; border: 1px solid var(--line); }
+    .seg button { background: transparent; border: none; border-right: 1px solid var(--line);
+      color: var(--muted); font-family: var(--mono); font-size: 12px; padding: 8px 12px; cursor: pointer; }
+    .seg button:last-child { border-right: none; }
+    .seg button.on { color: var(--ink); background: rgba(0,0,0,0.04); }
+    .ghost { background: transparent; border: 1px solid var(--ink); color: var(--ink);
+      font-family: var(--mono); font-size: 13px; padding: 9px 20px; cursor: pointer; letter-spacing: 0.04em; }
+    .ghost:hover { border-color: var(--accent); color: var(--accent); }
+    .ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+    .stage { min-height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 8px 0 24px; padding: 32px 0; }
+    .paced-line { display: flex; align-items: baseline; gap: 18px; font-family: var(--mono); }
+    .paced-line .done { color: var(--line); font-size: 26px; }
+    .paced-line .cur { color: var(--ink); font-size: 84px; line-height: 1; }
+    .paced-line .next { color: var(--muted); font-size: 26px; }
+    .metronome { width: 220px; height: 2px; background: var(--line); margin-top: 26px; position: relative; }
+    .metronome > div { position: absolute; left: 0; top: 0; bottom: 0; width: 0%; background: var(--ink); }
+    .flow-line { font-family: var(--mono); font-size: 30px; white-space: nowrap; overflow: hidden; width: 100%; text-align: center; }
+    .flow-line .cur { color: var(--ink); border-bottom: 2px solid var(--accent); }
+    .flow-line .good { color: var(--good); }
+    .flow-line .bad { color: var(--accent); }
+    .flow-line .up { color: var(--muted); }
+    .readout { display: flex; gap: 40px; flex-wrap: wrap; margin-bottom: 24px; }
+    .readout .stat .n { font-family: var(--mono); font-size: 28px; }
+    .coverage { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px; }
+    .cell { border: 1px solid var(--line); padding: 6px 8px; font-family: var(--mono); font-size: 11px; position: relative; overflow: hidden; }
+    .cell .fill { position: absolute; left: 0; bottom: 0; top: 0; width: 0%; background: rgba(63,111,79,0.16); z-index: 0; }
+    .cell .k, .cell .c { position: relative; z-index: 1; }
+    .cell .k { font-size: 14px; }
+    .cell .c { color: var(--muted); }
+    .cell.under { border-color: var(--accent); }
+    .cell.met .k { color: var(--good); }
+    .summary { font-family: var(--mono); font-size: 13px; color: var(--ink); margin-top: 16px; white-space: pre-wrap; }
+    .hidden { display: none; }
+  </style>
 </head>
 <body>
-  <!-- The monkeytype-style random-character collector is built in BUILD_TRAINER. -->
-  <main id="clack-trainer-root">Clack trainer placeholder (built in BUILD_TRAINER).</main>
+  <div class="wrap">
+    <header>
+      <h1>Clack Trainer</h1>
+      <span class="sub">random-character collector &middot; one clock &middot; auto-labeled</span>
+    </header>
+
+    <section class="setup" id="setup">
+      <div class="field">
+        <label class="micro" for="keyboard">Keyboard</label>
+        <input id="keyboard" type="text" value="blue" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label class="micro" for="typist">Typist</label>
+        <input id="typist" type="text" placeholder="name" autocomplete="off" />
+      </div>
+      <div class="field">
+        <span class="micro">Purpose</span>
+        <div class="seg" id="purpose">
+          <button data-v="train" class="on">Train</button>
+          <button data-v="eval">Eval</button>
+          <button data-v="demo">Demo</button>
+        </div>
+      </div>
+      <div class="field">
+        <span class="micro">Mode</span>
+        <div class="seg" id="mode">
+          <button data-v="paced" class="on">Paced</button>
+          <button data-v="flow">Flow</button>
+        </div>
+      </div>
+      <div class="field">
+        <label class="micro" for="mic">Mic</label>
+        <select id="mic"><option value="">default</option></select>
+      </div>
+      <div class="field">
+        <button class="ghost" id="startBtn">Start</button>
+      </div>
+    </section>
+
+    <section class="stage" id="stage">
+      <div class="paced-line hidden" id="pacedLine">
+        <span class="done" id="pacedDone"></span>
+        <span class="cur" id="pacedCur">-</span>
+        <span class="next" id="pacedNext"></span>
+      </div>
+      <div class="metronome hidden" id="metronome"><div id="metroFill"></div></div>
+      <div class="flow-line hidden" id="flowLine"></div>
+      <p class="micro" id="stageHint">Set up above, then Start. Type only the highlighted key.</p>
+    </section>
+
+    <section class="readout" id="readout">
+      <div class="stat"><span class="micro">Keys captured</span><span class="n" id="statKeys">0</span></div>
+      <div class="stat"><span class="micro">Coverage</span><span class="n" id="statCov">0/37</span></div>
+      <div class="stat"><span class="micro">Elapsed</span><span class="n" id="statElapsed">0s</span></div>
+      <div class="stat"><span class="micro">WPM</span><span class="n" id="statWpm">-</span></div>
+    </section>
+
+    <section>
+      <span class="micro">Coverage strip (toward quota)</span>
+      <div class="coverage" id="coverage"></div>
+    </section>
+
+    <div>
+      <button class="ghost hidden" id="stopBtn" style="margin-top:24px;">Stop</button>
+      <div class="summary" id="summary"></div>
+    </div>
+  </div>
   <script src="trainer.js"></script>
 </body>
 </html>
