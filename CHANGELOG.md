@@ -16,6 +16,11 @@ All notable changes to Clack are documented here. The format follows
   session start/stop writing the section 9 on-disk contract, the monkeytype-style
   trainer page (paced and flow, coverage strip, purpose quotas), the terminal
   fallback collector, and the full physical protocol in `docs/data-collection.md`.
+- Model (`feat/model`): shared onset segmentation (identical window for train and
+  attack), log-Mel features, session-split dataset with augmentation, the
+  nearest-centroid floor and the CNN with an embedding head, seeded training with
+  device detection and a confusion matrix, the offline attack with password
+  search-space reduction, and embedding-prototype cross-keyboard calibration.
 
 ## [0.1.0] - 2026-09-26
 
