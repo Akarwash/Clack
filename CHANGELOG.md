@@ -11,6 +11,11 @@ All notable changes to Clack are documented here. The format follows
   and typed `config_types.py` (with `ensure_dirs`), the `docs/` skeletons,
   pinned `requirements.txt`, `pyproject.toml` pytest config, `conftest.py`
   synthetic fixtures, and one real green test suite (`tests/test_config.py`).
+- Clack Trainer (`feat/trainer`): balanced random-character prompts, microphone
+  capture with clock/latency mapping, pynput key logging (training only),
+  session start/stop writing the section 9 on-disk contract, the monkeytype-style
+  trainer page (paced and flow, coverage strip, purpose quotas), the terminal
+  fallback collector, and the full physical protocol in `docs/data-collection.md`.
 
 ## [0.1.0] - 2026-09-26
 
