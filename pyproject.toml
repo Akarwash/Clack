@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clack"
+version = "0.1.0"
+description = "An acoustic side-channel security auditor: audit, prove leakage, defend, verify."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "The Clack team" }]
+
+[tool.setuptools]
+py-modules = ["config", "conftest"]
+packages = ["clack"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --cov=clack --cov-report=term-missing"
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]

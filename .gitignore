@@ -1,0 +1,18 @@
+# Runtime data (created by ensure_dirs at runtime, never tracked)
+data/
+
+# Local build-plan working notes folder (the tracked plans live in the repo root as BUILD_*.md)
+plans/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.coverage
+.dist/
+
+# Model and data artifacts
+*.pt
+*.npz
+*.wav
