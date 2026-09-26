@@ -25,6 +25,11 @@ All notable changes to Clack are documented here. The format follows
   recall, CER, latency, masker-to-key ratio), `evaluate_attack`,
   `evaluate_defense`, `compare_models`, `cross_typist_eval`, and a `format_report`
   that only reports computed values, plus `docs/evaluation.md`.
+- Defense (`feat/defense`): the acoustic masker (band-limited noise plus decoy
+  transients) with the continuous Standard Shield, the honest before/after
+  measurement and minimum-effective-level sweep, the adaptive band, the D1 Exposure
+  Check (labeled Clack grade with reasons and recommendations), the D3 saved-report
+  fleet view, and `docs/threat-model.md`.
 
 ## [0.1.0] - 2026-09-26
 
