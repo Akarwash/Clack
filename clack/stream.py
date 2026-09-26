@@ -88,17 +88,7 @@ def calibrate_ambient(noise_audio: np.ndarray, sample_rate: int) -> float:
     float
         The calibrated threshold multiplier for :func:`clack.segment.detect_onsets`.
     """
-    audio = np.asarray(noise_audio, dtype=np.float32)
-    if audio.size == 0:
-        return float(config.ONSET_K)
-    filtered = _segment._highpass(audio, sample_rate, config.ONSET_HP_CUTOFF_HZ)
-    energy, _ = _segment._frame_energy(filtered, sample_rate)
-    if energy.size < 2:
-        return float(config.ONSET_K)
-    mean = float(np.mean(energy))
-    std = float(np.std(energy)) or 1e-12
-    z_max = (float(np.max(energy)) - mean) / std
-    return float(max(config.ONSET_K, z_max + 1.0))
+    return _segment.calibrate_k(noise_audio, sample_rate)
 
 
 def decode_window(model: object, window: np.ndarray, sample_rate: int, k: int = 5) -> tuple[str, float, list[tuple[str, float]]]:
@@ -220,7 +210,7 @@ class LiveDecoder:
         while self._running:
             tail = self.reader.read_tail(window_s)
             if tail.size >= config.WINDOW_SAMPLES:
-                onsets = _segment.detect_onsets(tail, self.reader.sample_rate, k=self.calibrated_k)
+                onsets = _segment.detect_keystrokes(tail, self.reader.sample_rate, k=self.calibrated_k)
                 base = self.reader.total_pushed - tail.shape[0]
                 for local in onsets:
                     absolute = base + int(local)

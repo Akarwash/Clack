@@ -147,6 +147,85 @@ def _onsets_with_energy(
     return np.asarray(onsets, dtype=np.int64), np.asarray(peaks, dtype=np.float64)
 
 
+def calibrate_k(noise_audio: np.ndarray, sample_rate: int) -> float:
+    """Return an onset threshold multiplier from a quiet-room noise sample.
+
+    Chooses a ``k`` large enough to clear the loudest observed noise frame plus a
+    margin, never below ``config.ONSET_K``. Shared by the live path
+    (:func:`clack.stream.calibrate_ambient`) and the offline attack's auto
+    calibration.
+
+    Parameters
+    ----------
+    noise_audio : numpy.ndarray
+        A slice of quiet-room audio.
+    sample_rate : int
+        Sample rate in Hz.
+
+    Returns
+    -------
+    float
+        The calibrated threshold multiplier.
+    """
+    audio = np.asarray(noise_audio, dtype=np.float32)
+    if audio.size == 0:
+        return float(config.ONSET_K)
+    filtered = _highpass(audio, sample_rate, config.ONSET_HP_CUTOFF_HZ)
+    energy, _ = _frame_energy(filtered, sample_rate)
+    if energy.size < 2:
+        return float(config.ONSET_K)
+    mean = float(np.mean(energy))
+    std = float(np.std(energy)) or 1e-12
+    z_max = (float(np.max(energy)) - mean) / std
+    return float(max(config.ONSET_K, z_max + 1.0))
+
+
+def auto_calibrate_k(audio: np.ndarray, sample_rate: int) -> float:
+    """Estimate the onset threshold from the quietest window of a recording.
+
+    Splits the audio into one-second windows and calibrates from the lowest-energy
+    one, so a recording whose start is not quiet is still calibrated against its
+    own noise floor (the offline analogue of live ambient calibration).
+
+    Parameters
+    ----------
+    audio : numpy.ndarray
+        Mono float32 audio samples.
+    sample_rate : int
+        Sample rate in Hz.
+
+    Returns
+    -------
+    float
+        The calibrated threshold multiplier.
+    """
+    audio = np.asarray(audio, dtype=np.float32)
+    win = sample_rate
+    if audio.shape[0] <= win:
+        return calibrate_k(audio, sample_rate)
+    n = audio.shape[0] // win
+    windows = audio[: n * win].reshape(n, win)
+    rms = np.sqrt(np.mean(windows.astype(np.float64) ** 2, axis=1))
+    quietest = windows[int(np.argmin(rms))]
+    return calibrate_k(quietest, sample_rate)
+
+
+def _apply_refractory(onsets: np.ndarray, refractory_samples: int) -> np.ndarray:
+    """Keep the first onset in each refractory window (collapse press+release).
+
+    A mechanical keystroke produces a loud press click and a loud release click a
+    short time apart; both cross the onset threshold. Keeping only the first onset
+    within ``refractory_samples`` collapses that pair (and stray finger noise) into
+    one onset per keystroke, under the MVP threat model of >= ``DEMO_MIN_GAP_MS``
+    between real keystrokes.
+    """
+    kept: list[int] = []
+    for s in onsets.tolist():
+        if not kept or s - kept[-1] >= refractory_samples:
+            kept.append(int(s))
+    return np.asarray(kept, dtype=np.int64)
+
+
 def find_onset_near(
     audio: np.ndarray,
     approx_sample: int,
@@ -229,12 +308,18 @@ def cut_window(audio: np.ndarray, onset_sample: int) -> np.ndarray:
     return window
 
 
-def windows_from_audio(
+def detect_keystrokes(
     audio: np.ndarray,
     sample_rate: int,
     k: Optional[float] = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Attack path: detect onsets and cut a window at each (no labels).
+    refractory: bool = True,
+) -> np.ndarray:
+    """Detect one onset per keystroke for the attack path.
+
+    Auto-calibrates the onset threshold from the recording's quietest window when
+    ``k`` is not given (the offline analogue of live ambient calibration), then
+    applies the keystroke refractory (``config.ONSET_REFRACTORY_MS``) so a
+    mechanical keyboard's press and release clicks count as one keystroke.
 
     Parameters
     ----------
@@ -243,7 +328,42 @@ def windows_from_audio(
     sample_rate : int
         Sample rate in Hz.
     k : float or None, optional
-        Onset threshold multiplier; defaults to ``config.ONSET_K``.
+        Onset threshold multiplier; auto-calibrated when ``None``.
+    refractory : bool, optional
+        Apply the keystroke refractory merge (default ``True``).
+
+    Returns
+    -------
+    numpy.ndarray
+        Onset sample indices, one per detected keystroke.
+    """
+    if k is None:
+        k = auto_calibrate_k(audio, sample_rate)
+    onsets = detect_onsets(audio, sample_rate, k=k)
+    if refractory and onsets.size:
+        refractory_samples = int(sample_rate * config.ONSET_REFRACTORY_MS / 1000.0)
+        onsets = _apply_refractory(onsets, refractory_samples)
+    return onsets
+
+
+def windows_from_audio(
+    audio: np.ndarray,
+    sample_rate: int,
+    k: Optional[float] = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Attack path: detect keystroke onsets and cut a window at each (no labels).
+
+    Uses :func:`detect_keystrokes` (auto-calibrated threshold plus the keystroke
+    refractory), so one keystroke yields one window even on a clicky keyboard.
+
+    Parameters
+    ----------
+    audio : numpy.ndarray
+        Mono float32 audio samples.
+    sample_rate : int
+        Sample rate in Hz.
+    k : float or None, optional
+        Onset threshold multiplier; auto-calibrated when ``None``.
 
     Returns
     -------
@@ -252,7 +372,7 @@ def windows_from_audio(
         ``(n_onsets, config.WINDOW_SAMPLES)`` and ``onsets`` holds the sample
         indices.
     """
-    onsets = detect_onsets(audio, sample_rate, k=k)
+    onsets = detect_keystrokes(audio, sample_rate, k=k)
     if onsets.size == 0:
         return np.zeros((0, config.WINDOW_SAMPLES), dtype=np.float32), onsets
     windows = np.stack([cut_window(audio, int(o)) for o in onsets], axis=0)

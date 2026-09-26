@@ -33,7 +33,8 @@ SPEC_FRAMES = WINDOW_SAMPLES // HOP_LENGTH + 1          # T, the fixed time dime
 ONSET_HP_CUTOFF_HZ = 1500
 ONSET_FRAME_MS = 5
 ONSET_K = 3.0                  # default; ambient calibration overrides this at attack startup
-ONSET_MIN_GAP_MS = 60
+ONSET_MIN_GAP_MS = 60          # transient debounce: one physical press-onset yields one onset
+ONSET_REFRACTORY_MS = 180      # keystroke refractory (attack path): collapse the press+release click pair of one keystroke into one onset. Below DEMO_MIN_GAP_MS so distinct keystrokes at the MVP cadence are kept.
 AMBIENT_CALIB_S = 2            # quiet room calibration at attack start to set the onset threshold dynamically
 
 # Modes
