@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use Clack, please cite it as below."
+title: "Clack: an acoustic side-channel security auditor"
+abstract: >-
+  Clack is a defensive auditing tool that measures how vulnerable a keyboard
+  environment is to microphone-based keystroke inference, demonstrates the
+  leakage live, applies an acoustic countermeasure, and quantitatively verifies
+  the reduction (the AUDIT to ATTACK to DEFENSE to VERIFY loop).
+type: software
+authors:
+  - name: "The Clack team"
+version: 0.1.0
+date-released: "2026-09-26"
+license: MIT
+keywords:
+  - acoustic side channel
+  - keystroke inference
+  - security audit
+  - defensive security
+  - keyboard acoustics
