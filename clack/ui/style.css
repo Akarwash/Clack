@@ -1,0 +1,10 @@
+/* Clack dashboard design system and styles.
+ *
+ * Owner: BUILD_FRONTEND. This file holds the :root design tokens shared with
+ * trainer.html (which links this file read-only). Filled in BUILD_FRONTEND.
+ */
+
+:root {
+  /* Design tokens are defined in BUILD_FRONTEND. */
+  --clack-placeholder: 0;
+}
