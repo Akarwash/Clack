@@ -28,7 +28,18 @@ implementation of the paper is copied.
 
 ## Screenshot
 
-_Dashboard screenshot placeholder (added in BUILD_FRONTEND)._
+The dashboard is an editorial-minimal, single-page interface (warm paper, hairline
+rules, mono data, one accent) with a light and a dark "projector" theme. The top
+INPUT SOURCES line is the credibility statement: `Microphone: ACTIVE,
+Keyboard Events: DISABLED`. Below it, the RAW model output sits next to the
+language-CORRECTED text, with the live signal, top-3 confidence bars, an on-screen
+keyboard that flashes the guessed key, the password search-space collapse, and the
+defense panel (Protected Typing toggle, before/after recovery bars, Clack Exposure
+Grade, and saved fleet reports).
+
+To capture `docs/dashboard.png`: run `python scripts/serve.py`, open
+`http://127.0.0.1:8000/`, start an attack, and screenshot the window (see
+[docs/runbook.md](docs/runbook.md)). The whole page loads with no network.
 
 ## Install
 

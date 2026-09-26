@@ -81,6 +81,7 @@ def create_app() -> FastAPI:
     app.state.masker = None
     app.state.last_exposure = None
     app.state.last_defense = None
+    app.state.corrector = None
 
     # ---- Pages ----------------------------------------------------------------
     @app.get("/")
@@ -268,6 +269,16 @@ def create_app() -> FastAPI:
     @app.get("/fleet")
     def fleet() -> "JSONResponse":
         return JSONResponse(exposure.load_fleet_reports())
+
+    # ---- Correction (local, no network) ---------------------------------------
+    @app.post("/correct")
+    async def correct_route(body: dict) -> dict:
+        lattice = body.get("lattice", [])
+        if app.state.corrector is None:
+            from clack.correct import NgramCorrector
+
+            app.state.corrector = NgramCorrector()
+        return {"text": app.state.corrector.correct(lattice)}
 
     # ---- Status / preflight ---------------------------------------------------
     @app.get("/status")

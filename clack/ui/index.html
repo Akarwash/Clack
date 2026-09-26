@@ -3,13 +3,145 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Clack Dashboard</title>
-  <!-- Self-hosted only, no CDN (golden rule). Built in BUILD_FRONTEND. -->
+  <title>Clack</title>
+  <meta name="description" content="Clack: an acoustic side-channel security auditor. Audit, prove leakage, defend, verify." />
+  <!-- Self-hosted styles and fonts only, no CDN (golden rule: no network at load). -->
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <!-- The editorial-minimal dashboard is built in BUILD_FRONTEND. -->
-  <main id="clack-root">Clack dashboard placeholder (built in BUILD_FRONTEND).</main>
+  <header class="topbar">
+    <div class="brand">
+      <span class="wordmark">Clack</span>
+      <span class="ver">v0.1.0</span>
+    </div>
+    <nav>
+      <a href="/trainer">Trainer</a>
+      <a href="/" class="on">Attack</a>
+    </nav>
+    <div class="right">
+      <span class="status-dot" id="liveDot"><span class="dot"></span><span class="micro" id="liveLabel">IDLE</span></span>
+      <button class="btn ghost" id="themeBtn" title="Toggle theme (D)">Theme</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- INPUT SOURCES: the credibility line (attack uses sound alone) -->
+    <section class="sources" id="sources">
+      <div class="item">
+        <span class="micro">Microphone</span>
+        <span class="val active" id="srcMic">unknown</span>
+      </div>
+      <div class="item">
+        <span class="micro">Keyboard events</span>
+        <span class="val disabled" id="srcKeys">DISABLED</span>
+      </div>
+      <div class="item">
+        <span class="micro">Ambient</span>
+        <span class="val" id="srcAmbient">not calibrated</span>
+      </div>
+      <div class="item">
+        <span class="micro">Compute</span>
+        <span class="val" id="srcCompute">-</span>
+      </div>
+    </section>
+
+    <!-- Controls -->
+    <section class="controls" style="margin:18px 0;">
+      <button class="btn" id="startBtn">Start attack</button>
+      <button class="btn ghost" id="stopBtn" disabled>Stop</button>
+      <label class="micro" for="modelSel">Model</label>
+      <select id="modelSel">
+        <option value="">default</option>
+        <option value="cnn">CNN</option>
+        <option value="centroid">baseline</option>
+      </select>
+      <label class="micro"><input type="checkbox" id="cleanRun" /> Clean run (event mode)</label>
+      <label class="micro"><input type="checkbox" id="synthSrc" /> Wiring demo (synthetic)</label>
+      <span class="badge" id="synthBadge" style="display:none;">synthetic wiring stream</span>
+    </section>
+
+    <!-- Row 1: recovered text -->
+    <section class="recovered">
+      <div class="line">
+        <span class="tag micro">Raw model</span>
+        <span class="text" id="rawText"></span>
+      </div>
+      <div class="line">
+        <span class="tag micro">Corrected</span>
+        <span class="text" id="corrText"></span>
+      </div>
+    </section>
+
+    <hr class="rule" />
+
+    <!-- Row 2: signal (left) + confidence & metrics (right) -->
+    <section class="grid">
+      <div class="col-8 panel">
+        <p class="section-label micro">Signal
+          <label class="micro" style="margin-left:16px;"><input type="checkbox" id="onsetDbg" /> onset debug</label>
+        </p>
+        <canvas id="waveCanvas" height="120"></canvas>
+        <div style="height:8px;"></div>
+        <canvas id="specCanvas" height="140"></canvas>
+      </div>
+      <div class="col-4 panel">
+        <p class="section-label micro">Top-3 candidates</p>
+        <div class="bars" id="confBars"></div>
+        <p class="section-label micro" style="margin-top:20px;">Metrics</p>
+        <ul class="metrics" id="metrics">
+          <li><span>onset recall</span><span class="v" id="mRecall">not measured</span></li>
+          <li><span>raw top-1</span><span class="v" id="mTop1">not measured</span></li>
+          <li><span>top-3</span><span class="v" id="mTop3">not measured</span></li>
+          <li><span>CER</span><span class="v" id="mCer">not measured</span></li>
+          <li><span>median latency</span><span class="v" id="mLat">not measured</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <hr class="rule" />
+
+    <!-- Row 3: keyboard (left) + password/defense (right) -->
+    <section class="grid">
+      <div class="col-7 panel">
+        <p class="section-label micro">Keyboard</p>
+        <canvas id="kbdCanvas" height="200" class="kbd-wrap"></canvas>
+      </div>
+      <div class="col-5 panel">
+        <p class="section-label micro">Password search space</p>
+        <div class="hero-num" id="spaceNum">-</div>
+        <div class="bars"><div class="bar-track"><div class="bar-fill accent" id="spaceBar" style="width:0%"></div></div></div>
+
+        <hr class="rule" />
+
+        <p class="section-label micro">Defense &middot; Protected Typing</p>
+        <div class="toggle-row">
+          <button class="btn" id="shieldBtn">Arm shield</button>
+          <span class="note" id="shieldState">off</span>
+        </div>
+        <div class="bars">
+          <div class="bar-row"><span class="micro">recovery, masker off</span>
+            <div class="bar-track"><div class="bar-fill" id="offBar" style="width:0%"></div></div></div>
+          <div class="bar-row"><span class="micro">recovery, masker on</span>
+            <div class="bar-track"><div class="bar-fill accent" id="onBar" style="width:0%"></div></div></div>
+        </div>
+        <p class="note" id="defNote">No before/after measurement yet.</p>
+
+        <hr class="rule" />
+
+        <p class="section-label micro">Clack Exposure Grade <span class="note">(heuristic, not a standard)</span></p>
+        <div class="grade" id="grade">-</div>
+        <ul class="reasons" id="reasons"></ul>
+        <button class="btn ghost" id="exposureBtn">Run exposure check</button>
+
+        <hr class="rule" />
+
+        <p class="section-label micro">Saved audit reports (fleet)</p>
+        <ul class="fleet-list" id="fleet"><li>none</li></ul>
+      </div>
+    </section>
+  </main>
+
+  <!-- Vanilla JS, no build step, no CDN. -->
   <script src="app.js"></script>
 </body>
 </html>
