@@ -57,8 +57,9 @@ Only `press` events. Map the spacebar to `"space"`. Drop keys not in `KEY_SET`.
 
 ## 4. Prompt generation (`prompts.py`)
 
-- `balanced_sequence(key_set=KEY_SET, length=TRAINER_DEFAULT_LENGTH, seed=None) -> list[str]`:
+- `balanced_sequence(key_set=KEY_SET, length=None, seed=None) -> list[str]`:
   - Repeatedly shuffle a copy of `key_set` and concatenate the shuffles, then trim to `length`. This guarantees per-key counts differ by at most one shuffle cycle, unlike uniform random sampling which leaves some keys under-sampled by chance.
+  - Default `length` covers `TARGET_SAMPLES_PER_KEY` presses of every key (`TARGET_SAMPLES_PER_KEY * len(key_set)`), so a full session hits the coverage target. The session is coverage-driven, not length-driven: it can serve more prompts if some keys fall behind.
   - Seed for reproducibility, but allow a fresh seed per session so typists do not memorize the order.
   - Return character tokens; render `"space"` in the UI as a visible glyph (the word "space" or a wide underscore) but treat it as one key.
 - Tests (`test_prompts.py`, Hypothesis): for any `length` and `key_set`, output length is exact, every token is in the set, and max minus min per-key count is at most one cycle.
@@ -105,20 +106,21 @@ Only `press` events. Map the spacebar to `"space"`. Drop keys not in `KEY_SET`.
 
 ## 9. The trainer page (`trainer.html`, `trainer.js`, `style.css`)
 
-Editorial-minimal, per the design system in BUILD_FRONTEND (paper background, near-black ink, hairlines, mono for data, one accent). It should look intentional if a judge glances at it. Load Space Grotesk and JetBrains Mono from Google Fonts, use the `:root` tokens from BUILD_FRONTEND.
+Editorial-minimal, per the design system in BUILD_FRONTEND (paper background, near-black ink, hairlines, mono for data, one accent). It should look intentional if a judge glances at it. Use the self-hosted fonts and `:root` tokens from BUILD_FRONTEND (`ui/fonts/`, no CDN), so the page loads with no network.
 
 Layout, top to bottom:
-1. **Setup row (before Start):** micro-labeled controls: `Keyboard` (text, for example "blue" or "c3equalz"), `Typist` (text), `Mode` (Paced / Flow segmented control), `Length` (number, default `TRAINER_DEFAULT_LENGTH`), `Mic` (dropdown from `GET /devices`). One ghost `Start` button (ink text, hairline border, accent on hover).
+1. **Setup row (before Start):** micro-labeled controls: `Keyboard` (text, for example "blue" or "c3equalz"), `Typist` (text), `Mode` (Paced / Flow segmented control), `Target/key` (number, default `TARGET_SAMPLES_PER_KEY` = 40), `Mic` (dropdown from `GET /devices`). One ghost `Start` button (ink text, hairline border, accent on hover).
 2. **The stage (center, large):**
    - **Paced mode (default):** one giant current character in the hero mono size, centered. The next few upcoming characters faint to its right, completed ones faded to the left. A thin metronome line under the current character fills over `TRAINER_PACED_GAP_MS` and resets on each correct press. This isolates presses for the cleanest data.
    - **Flow mode:** a single line of upcoming random characters scrolling right to left, monkeytype-style; the current one marked; correct in `--good`, incorrect in `--accent`. Faster, more data, some natural overlap.
-3. **Live readout row:** micro-labels with big mono numerals: `Keys captured`, `Elapsed`, and in flow mode `WPM`.
-4. **Coverage strip:** a row of 37 tiny cells, one per key, each filling from `--line` toward `--ink` as that key accumulates samples, so the typist sees which keys still need data. Useful and a nice visual.
+3. **Live readout row:** micro-labels with big mono numerals: `Keys captured`, `Coverage` (keys at target / 37), `Elapsed`, and in flow mode `WPM`.
+4. **Coverage strip (coverage-driven collection):** a row of 37 cells, one per key, each showing that key's count toward the target (for example `a 40/40`, `b 24/40`) and filling from `--line` toward `--ink` as it approaches `TARGET_SAMPLES_PER_KEY`. Keys below target are highlighted. When every key reaches the target, the trainer auto-stops and shows "coverage complete". This replaces an arbitrary total length.
 5. **Stop button:** calls `/trainer/stop`, then shows a quiet confirmation line with the saved counts and path.
 
 `trainer.js`:
 - On Start: `POST /trainer/start`, then `GET /trainer/prompt` for the sequence, start the UI clock and (paced) the metronome.
-- The browser's own `keydown` drives only the UI: advance the pointer, color correct/incorrect, tick the coverage strip. It does not label anything.
+- The browser's own `keydown` drives only the UI: advance the pointer, color correct/incorrect, update the per-key coverage counts. It does not label anything.
+- Track per-key counts client-side toward `TARGET_SAMPLES_PER_KEY`; when all 37 hit target, auto-stop (call `/trainer/stop`) and show completion. If a prompt runs out before coverage is met, fetch another `balanced_sequence` and continue.
 - On Stop: `POST /trainer/stop`, render the summary.
 - Wrap any `localStorage` use (remembered keyboard/typist) in try/catch.
 
@@ -134,7 +136,7 @@ A no-browser paced collector for the first minutes on-site before the page is wi
 
 1. Pin the mic: hit `GET /devices`, set `INPUT_DEVICE` in config.
 2. Grant OS input monitoring (the app will tell you if it is missing).
-3. Open `/trainer`, set `Keyboard` and `Typist`, choose Paced, and collect. Aim for at least 100 presses per key per board (about an hour split across typists). Watch the coverage strip and keep going until every key is filled.
+3. Open `/trainer`, set `Keyboard` and `Typist`, choose Paced, and collect until the coverage strip shows every key at `TARGET_SAMPLES_PER_KEY` (40), about 15 minutes split across typists. The trainer auto-stops when coverage is complete.
 4. Repeat on the second board (change `Keyboard`).
 5. Collect a few short extra sessions to reserve as held-out test recordings and as cross-keyboard calibration strings.
 6. The recordings are now on disk for BUILD_MODEL to train on.

@@ -20,7 +20,7 @@ Outputs: a trained model at `data/models/<name>/` (`model.pt`, `config.json`, `m
 ## 2. Data requirements
 
 - **Classes:** `KEY_SET` from config: `a-z`, `0-9`, and `space` (37 classes) to start.
-- **Samples per key:** aim for at least 100 clean presses per key for the same-keyboard model (the paper used 25 per key on one board; more is better and the trainer makes it cheap). In paced mode at ~1 key/second, 100 presses per key across 37 keys is about one hour of typing, split across the team. Start collecting the moment the venue setup works.
+- **Samples per key:** collect until every key reaches `TARGET_SAMPLES_PER_KEY` (40; the paper used 25, so 40 is a safe floor). At the 550 ms paced interval, 40 x 37 is about 15 minutes of typing, split across the team. The trainer is coverage-driven and auto-stops when the target is met (see BUILD_TRAINER). Do not chase huge totals; 40 per key is enough to start, more helps the cross-keyboard stretch.
 - **Balance:** the trainer's balanced sequence keeps per-key counts even. Still compute and log per-key counts before training and warn on any key with fewer than 40 samples.
 - **Multiple typists:** collect from two or three people so the model is not tuned to one person's hands. Note honestly that the on-stage typist should be represented in training for the strongest result.
 - **Per board:** collect a separate dataset per physical keyboard (blue board, C3 Equalz board). The model learns a board's acoustic signature.
@@ -29,17 +29,19 @@ Outputs: a trained model at `data/models/<name>/` (`model.pt`, `config.json`, `m
 
 ## 3. Preprocessing
 
-### 3.1 Keystroke isolation (two paths, same output window)
+### 3.1 Keystroke isolation (both paths cut an onset-centered window; only the label source differs)
 
-The window shape must be identical for training and attack, or the classifier sees a distribution shift.
+Critical, read carefully. **Do not cut the training window at the raw keyboard-event timestamp.** sounddevice/PortAudio buffers input, so the callback arrival time is not the sample capture time, and cutting at the event timestamp would train the model on windows shifted by an unknown, roughly constant driver latency, which the attack path (which finds onsets acoustically) would not share. The fix: the event gives the label and an approximate location, then you snap to the real acoustic onset.
 
-- **Training (labels known):** `windows_from_events(audio, events, sr)`. For each `press` event, compute `onset_sample = round((t_perf - audio_start_perf) * sr)`, then cut `[onset_sample - PRE, onset_sample - PRE + WINDOW_SAMPLES]` where `PRE = int(sr * PRE_ONSET_MS/1000)` and `WINDOW_SAMPLES = int(sr * WINDOW_MS/1000)` (8820 samples for 200 ms at 44.1 kHz). Drop events whose key is not in `KEY_SET`.
+- **Training (label known):** `windows_from_events(audio, events, sr)`. For each `press` event: compute the approximate sample `a = round((t_perf - audio_start_perf) * sr)`, search the band `[a - S, a + S]` where `S = int(sr * ONSET_SEARCH_MS/1000)` (about ±100 ms) for the actual acoustic onset (the same energy/spectral-flux peak the attack uses), then cut the identical onset-centered window used at attack time (`PRE = int(sr * PRE_ONSET_MS/1000)` before the onset, length `WINDOW_SAMPLES` = 8820). The key from the event is the label. Drop events whose key is not in `KEY_SET`. If no clear onset is found in the band (silence, missed press), drop that sample rather than cutting at the raw timestamp.
 - **Attack (no labels):** `detect_onsets(audio, sr)` then `windows_from_audio(audio, sr)`. Onset detection (energy method, as in the paper):
   1. High-pass filter the audio at `ONSET_HP_CUTOFF_HZ` (1500 Hz) to emphasize the click transient over room rumble.
   2. Compute short-time energy: frame the signal into `ONSET_FRAME_MS` (5 ms) frames, energy = sum of squares per frame.
-  3. Estimate a rolling baseline (mean and std over a trailing window). Mark a candidate onset where energy crosses `baseline_mean + ONSET_K * baseline_std` (K = 3.0) on a rising edge and is a local maximum.
+  3. Threshold at `baseline_mean + ONSET_K * baseline_std`. `ONSET_K` defaults to 3.0 but is set dynamically by the ambient calibration at attack startup (see BUILD_BACKEND). Mark a candidate onset on a rising edge that is a local maximum.
   4. Debounce: reject any onset within `ONSET_MIN_GAP_MS` (60 ms) of the previous one, so one physical press yields one onset (push, not release).
-  5. Cut the same `WINDOW_SAMPLES` window with the same `PRE` offset around each onset.
+  5. Cut the same onset-centered `WINDOW_SAMPLES` window with the same `PRE` offset. This is the exact same cut helper the training path calls once it has found the onset, so the two paths cannot drift.
+
+Factor the actual onset-finding and window-cutting into one shared helper (`find_onset_near`, `cut_window`) used by both paths, so "identical window" is guaranteed by construction, not by two parallel implementations.
 
 ### 3.2 Features: log-Mel spectrogram
 
@@ -56,7 +58,15 @@ Tests (`test_features.py`): output is always `(64, T)`, finite, deterministic fo
 
 ## 4. Model architecture
 
-Build the small CNN first. It trains in minutes and is enough for the same-keyboard result. Keep the paper's CoAtNet as a documented upgrade path only if you have GPU time to spare.
+Build the baseline first, then the CNN. The baseline is the guaranteed floor; the CNN is the primary model; CoAtNet is an optional upgrade only if you have GPU time to spare.
+
+### 4.0 Floor: nearest-centroid baseline (`model.py`, class `CentroidBaseline`) — build this first
+
+A trivial classifier that needs almost no machinery and guarantees a working end-to-end demo even if CNN training breaks.
+- `fit(X, y)`: compute the mean normalized log-Mel vector (flattened) per class; store the 37 centroids.
+- `predict(x) -> topk`: classify by nearest centroid (cosine or euclidean), return top-k.
+- Same predict interface as the CNN so `attack.py`, `evaluate.py`, and `stream.py` can run against either model by a config switch.
+Why: if the CNN does not converge at 3 AM, the baseline still recovers text live. And reporting "CNN 81% vs centroid 48%" is a clean, honest technical result on its own. Keep the baseline working at all times.
 
 ### 4.1 Primary: small CNN (`model.py`, class `ClackCNN`)
 
@@ -85,8 +95,8 @@ If a CUDA GPU is available and the small CNN has converged with time to spare, s
 
 ## 5. Dataset and augmentation (`dataset.py`)
 
-- `build_dataset(session_dirs, name) -> path`: read each session, cut event windows, compute log-Mel, map keys to indices, cache to `data/datasets/<name>.npz` with `X (N,64,T) float32`, `y (N,) int64`, `classes`, and a `meta` JSON (source sessions, keyboard ids, config snapshot).
-- A `torch.utils.data.Dataset` wrapping the npz, plus a deterministic seeded train/val split (`VAL_SPLIT=0.15`).
+- `build_dataset(session_dirs, name) -> path`: read each session, cut onset-centered windows (section 3.1), compute log-Mel, map keys to indices, cache to `data/datasets/<name>.npz` with `X (N,64,T) float32`, `y (N,) int64`, `classes`, a per-sample `session_id`, and a `meta` JSON (source sessions, keyboard ids, config snapshot).
+- **Split by session, never randomly (`SPLIT_BY_SESSION=True`).** Do NOT randomly split windows 85/15 when they come from the same recording: train and val would share the same mic position, room noise, gain, and typist state, which inflates validation accuracy. Instead, hold out one or more entire sessions for validation and test, and use different sessions for training. The final demo phrase must come from yet another recording the model never trained on. This is what makes the before/after result defensible. Keep the per-sample `session_id` so the split is by session.
 - **Augmentation, train split only, applied on the fly:**
   - Additive Gaussian noise, std `AUG_NOISE_STD` (0.005) on the raw window before the spectrogram, or on the spectrogram.
   - Small time shift up to `AUG_TIME_SHIFT_MS` (10 ms) of the window before featurizing.
@@ -94,14 +104,14 @@ If a CUDA GPU is available and the small CNN has converged with time to spare, s
   - SpecAugment: mask up to `SPECAUG_TIME_MASK` (6) time frames and `SPECAUG_FREQ_MASK` (8) Mel bands.
 - **Class balancing:** either a `WeightedRandomSampler` or class-weighted cross-entropy from inverse class frequency. Prefer class-weighted loss for simplicity. Log per-class counts before training.
 
-Tests (`test_dataset.py`): the npz has matching `X`/`y` lengths; augmentation preserves shape; the split is deterministic under a fixed seed.
+Tests (`test_dataset.py`): the npz has matching `X`/`y` lengths; augmentation preserves shape; the split assigns whole sessions to train vs val (no `session_id` appears in both).
 
 ---
 
 ## 6. Training (`train.py`, `scripts/run_train.py`)
 
 Procedure, all seeded from `config.SEED`:
-1. Load the dataset npz, build loaders (`BATCH_SIZE=64`).
+1. Load the dataset npz, build loaders (`BATCH_SIZE=64`) with the session-level split from section 5. First fit `CentroidBaseline` on the train split and record its val accuracy: that is the floor, saved even if the CNN step fails.
 2. Instantiate `ClackCNN(num_classes)`, move to the detected device (CUDA / MPS / CPU).
 3. Optimizer: Adam(`lr=LR=1e-3`, `weight_decay=WEIGHT_DECAY=1e-4`).
 4. Loss: cross-entropy with class weights.
@@ -117,12 +127,10 @@ Tests (`test_model.py`): forward and embed return correct shapes on a synthetic 
 
 ## 7. Inference and evaluation (`attack.py`, `scripts/run_attack.py`)
 
-- `attack_wav(path, model) -> list[dict]`: run `detect_onsets`, cut windows, featurize, classify, return per keystroke `{index, topk: [(key, prob), ...], best: key}`.
-- **Prose evaluation:** feed a held-out recording of a typed sentence; report exact-match character accuracy (raw), then accuracy after language-model correction (see BUILD_BACKEND for `correct.py`).
-- **Password evaluation (the honest number):** for a typed password, report:
-  - Exact full-string recovery rate over repeated trials.
-  - The combined top-3-per-position search-space size, that is `product over positions of min(3, candidates)`, framed as "we reduced the space from X to N". At 95% per-key, a 12-char password is fully correct about 54% of the time; when it is not, top-3 per position collapses the space to a handful.
-- Never display an accuracy number you cannot reproduce live.
+- `attack_wav(path, model) -> list[dict]`: run `detect_onsets`, cut windows, featurize, classify, return per keystroke `{index, topk: [(key, prob), ...], best: key}`. Works with either `CentroidBaseline` or `ClackCNN` via the shared predict interface.
+- **Metrics come from `evaluate.py` (BUILD_EVAL).** Do not hand-roll metrics here. `run_attack.py` calls `evaluate.evaluate_attack` on a held-out session (different from training) and prints the full report: onset recall, raw top-1, top-k recall, CER, median latency, and raw vs language-corrected. Also run `evaluate.compare_models` for the baseline-vs-CNN line.
+- **Password evaluation (the honest number):** report top-k recall and the combined top-3-per-position search-space size (`product over positions of min(3, candidates)`), framed as "we reduced the space from X to N", not guaranteed exact recovery. At 95% per-key a 12-char password is fully correct about 54% of the time; when it is not, top-3 per position collapses the space to a handful.
+- Never display an accuracy number you cannot reproduce live, and always show raw next to corrected so no one thinks the language model did all the work.
 
 ---
 

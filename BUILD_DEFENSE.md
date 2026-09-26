@@ -1,90 +1,148 @@
 # Clack — BUILD_DEFENSE.md
 
-The countermeasure: an acoustic masker that corrupts the microphone signal the attack depends on, plus the measurement that proves it works. This is the half that wins the Cyber track, so make the effect unmistakable and honest. Read `CLACK_BUILD_PLAN.md` first. Commit regularly.
+The defense is the product. Clack protects sensitive typing (passwords, secrets) from acoustic surveillance. The attack (BUILD_MODEL, BUILD_BACKEND) exists to prove the threat is real and to measure how well the defense stops it. This file owns the parts that win the Cyber rubric's 30% Security Improvement: a real, deployable defensive function any organization could run on its endpoints.
 
-Covers files: `defense.py`, defense routes in `server.py`, the defense panel in `ui/app.js`.
+Read `CLACK_BUILD_PLAN.md` first. Commit regularly. Build the basic masker and measurement first (sections 3 to 4), then D1, D2, D3 in that order. Each has a stated DONE. Do not let the extra defense features block the working attack-plus-basic-defense demo, which is the floor.
 
----
-
-## 1. What it counters
-
-The attack needs a clean recording of each keystroke: a detectable onset and a distinguishable spectral shape. The masker attacks both. It adds sound in the same frequency band as the keystrokes so the classifier's features are corrupted, and it injects fake keystroke-like transients so the onset detector fires on phantom presses. With the masker on, onsets are wrong and windows are noisy, so recovery collapses toward random guessing.
-
-This is a real, on-topic defense: acoustic masking and "sound cover" are the standard mitigation discussed for keyboard acoustic side channels, including in the 2023 paper's mitigation section. We build one and measure it.
+Owns: `clack/defense.py`, `clack/exposure.py`, defense and exposure and fleet routes in `clack/server.py`, the defense panel contract used by the dashboard, and tests `tests/test_defense.py`, `tests/test_exposure.py`. (The dashboard's defense panel UI lives in `app.js`, owned by the FRONTEND agent, built against the contracts here.)
 
 ---
 
-## 2. Why the Mac's own speakers are enough (and better)
+## 1. Why this is the center of the project
 
-Speaker and microphone are inches apart in the same laptop chassis, so the masker reaches the mic at a high level relative to the keystrokes without any volume effort. Co-location is an advantage here, not a compromise. Two requirements:
-- **Capture raw audio with OS processing off** (no echo cancellation, noise suppression, or auto gain). Otherwise the OS may try to subtract the speaker output from the mic input and weaken the demonstrated effect. We want the masker genuinely present in the recording.
-- The masker band sits at 1 to 10 kHz (`MASKER_BAND_HZ`), which laptop speakers reproduce fine, so the weak-bass limitation of laptop speakers does not matter.
+The rubric rewards a real cybersecurity function that an organization would use and deploy at scale. An attack alone does not score there; a defense does. So Clack is framed as protection, and the demo spends about two of its three minutes on defense: prove you are exposed, turn on the protection, watch the attack collapse, show it deployed across machines.
+
+The threat is real and current: the 2023 paper recovered keystrokes at 93% over a Zoom call. Anyone typing a password while on a video call, in a shared office, or near any microphone is exposed. Clack is the countermeasure.
 
 ---
 
-## 3. The masker (`defense.py`)
+## 2. Threat model (state it explicitly, it is the answer to a sharp judge)
+
+Clack defends against **passive nearby acoustic capture**: a microphone near the keyboard, or keystrokes carried over a voice or video channel (the 93%-over-Zoom threat). It does **not** claim to defend against a fully compromised endpoint that can disable the defense or read keyboard events directly; that is out of scope, and the README says so. Stating the boundary is what makes the defense credible rather than hand-wavy.
+
+A sharp judge may say "isn't this just your speaker blasting noise next to your mic?" The honest answer: for the demo, co-located speaker and mic make the effect reliable to show; in a real deployment the masker is a small device near the protected keyboard. The narrowed threat model above is the real answer, not a dodge.
+
+## 2A. Why the Mac's own speakers are enough (for the demo)
+
+Speaker and microphone are inches apart in the same laptop, so the masker reaches the mic at a high level without volume effort. Co-location helps the defense. Two requirements: capture raw audio with OS processing off (no echo cancellation, noise suppression, auto gain), and keep the masker band where laptop speakers are strong (1 to 10 kHz), which is exactly where keystroke energy lives.
+
+---
+
+## 3. The masker (`defense.py`, base version)
 
 Two components, summed and played on a loop through the default output device via sounddevice.
-
-1. **Band-limited noise.** Generate white noise, band-pass filter it to `MASKER_BAND_HZ` (1000 to 10000 Hz) with a Butterworth filter (scipy), scale to `MASKER_LEVEL` (0.3 relative amplitude). This covers the spectral region where keystroke energy lives.
-2. **Fake keystroke transients.** At random intervals (for example every 40 to 120 ms, jittered), inject short click-like bursts (a few ms of shaped noise, or pre-recorded real keystroke clips played at random times). These create false onsets so the attack's onset detector cannot cleanly separate real presses.
+1. **Band-limited noise:** white noise band-pass filtered to `MASKER_BAND_HZ` (1000 to 10000 Hz) with a Butterworth filter, scaled to `MASKER_LEVEL` (0.3).
+2. **Fake keystroke transients:** short click-like bursts injected at jittered intervals (every 40 to 120 ms) so the attack's onset detector fires on phantom presses.
 
 Interface:
-- `class Masker`:
-  - `start()`: begin playback on a background `OutputStream` that continuously generates and streams the summed signal. Non-blocking.
-  - `stop()`: stop playback.
-  - `is_on() -> bool`.
-- Keep `MASKER_LEVEL` and `MASKER_BAND_HZ` in config so the effect can be tuned at the venue.
-
-Safety and courtesy: keep the level modest, it only needs to reach the co-located mic, not fill the room.
+- `class Masker`: `start()` (background `OutputStream`, non-blocking), `stop()`, `is_on() -> bool`.
 
 ---
 
 ## 4. Measurement (the honest before/after)
 
-The demo claim must be a measured number, not a vibe.
+- `measure(model, text, masker) -> {"off_acc", "on_acc", "off_cer", "on_cer", "delta"}`: type a fixed known `text` with the masker off, run the attack, compute recovery; repeat with the masker on; return both plus the delta. Use `evaluate.py` (BUILD_EVAL) for the actual metrics (top-1, CER) so the numbers match everywhere. Type the SAME fixed text both times, from a session not used in training.
+- Report the real measured drop. A believable "accuracy fell from X to near chance" beats an unbelievable "100 percent blocked."
 
-- `measure(model, text, masker) -> {"off_acc": float, "on_acc": float}`:
-  1. With the masker **off**, have the typist type a fixed known `text`; run the live attack; compute character accuracy against `text`.
-  2. With the masker **on**, type the same `text` again; run the attack; compute accuracy.
-  3. Return both. Optionally repeat and average for stability.
-- Report character accuracy (and, for prose, post-correction accuracy) in both conditions. Expect a sharp drop with the masker on.
-- Keep the exact `text` short and fixed so the two runs are comparable, and so the number is reproducible on stage.
-
-Do not overstate: report the real measured drop. A believable "accuracy fell from X to near chance" beats an unbelievable "100 percent blocked".
+**DONE (base):** the masker plays and stops cleanly, and `measure()` returns off vs on accuracy over the same text with a clear drop.
 
 ---
 
-## 5. Server and UI integration
+## 5. D1: Exposure Check (the rubric-closer, must-have)
 
-Backend routes (also listed in BUILD_BACKEND.md):
-- `POST /defense/on` -> `masker.start()`, return `{on:true}`.
-- `POST /defense/off` -> `masker.stop()`, return `{on:false}`.
-- `GET /defense/measure` -> `{off_acc, on_acc}`.
+A one-button "am I vulnerable?" assessment. This is what turns Clack from an attack demo into a posture tool an organization runs on every endpoint.
 
-Dashboard defense panel (see BUILD_FRONTEND.md):
-- A toggle `Masker off / on` wired to the routes; the top-bar status reflects it.
-- Two thin horizontal bars, `Masker off` and `Masker on`, from `/defense/measure`. Flipping the toggle on animates the "on" bar cratering to its low value. Keep it minimal and let the collapse read at a glance.
+`exposure.py`:
+- `check_exposure(model, sample_session) -> dict`: take a short typing sample (recorded via the trainer flow or a quick record), and compute:
+  - **Recovery:** run the real attack on the sample, character accuracy `R` (how much an attacker would recover).
+  - **Signal metrics:** keystroke SNR (onset energy over the noise floor) and per-key distinguishability (mean classifier confidence or embedding separation).
+  - **Grade:** map exposure to A to F, where more recoverable is worse. Suggested bands: `R < 0.15` = A (low risk), `0.15 to 0.35` = B/C, `0.35 to 0.6` = D, `> 0.6` = F (highly exposed). Combine with SNR so a loud, distinct keyboard is flagged even before a full attack.
+  - **Reasons:** concrete strings, for example "the attack recovered 82% of your text", "your keystrokes are loud and distinct (high SNR)", "microphone is close to the keyboard".
+  - **Recommendations:** enable the masker, move the mic away, use a quieter switch, avoid typing secrets on video calls.
+- Return `{grade, recovery, snr, reasons: [...], recommendations: [...]}`.
+
+Route: `POST /exposure/check` body references a recorded sample id -> the dict above.
+
+Why it scores: this is a real cybersecurity function ("assess acoustic exposure"), it is usable by any organization (run it on staff laptops), and it runs per endpoint, which is the honest form of "scalable across an organization."
+
+Tests (`test_exposure.py`): on a synthetic high-recovery sample the grade is poor (F) and on a masked or low-SNR sample the grade is good (A); reasons and recommendations are non-empty and match the metrics.
+
+**DONE (D1):** running Exposure Check on a typing sample returns a risk grade with specific reasons and recommendations, driven by the real attack.
 
 ---
 
-## 6. Demo moment
+## 6. D2: Adaptive, minimum-effective masker (upgrade `defense.py`)
 
-After the attack has wowed them, this is the turn: "Now the countermeasure." Flip the toggle, have the judge type the same thing, and the recovered text turns to garbage while the accuracy bar craters. Close on the before/after bars: "Attack, then defense, both measured." It reframes the project from a scary trick into a complete security contribution, which is what the Cyber judges reward.
+Make the masker something a person would actually leave running, and turn it into a real usability-vs-security result.
+- **Minimum-effective level (the headline).** `find_min_effective_level(model, text)`: sweep `MASKER_LEVEL_STEPS` ([0.1, 0.2, 0.3, 0.5]); for each level, measure attack recovery (via `evaluate`); pick the LOWEST level whose recovery falls below `MASKER_TARGET_RECOVERY` (0.20). Report it: "reduced recovery from 84% to 13% at the minimum effective masking level." This directly answers the rubric line that protection should preserve normal function with minimal friction, and it is far more interesting than "play loud noise".
+- **Trigger-based:** the masker plays only while typing is detected (reuse the onset detector on the live mic), silent when idle. No constant noise.
+- **Adaptive band:** `measure_keyboard_band(sample) -> (low, high)`: find the dominant keystroke energy band and tune the masker to cover exactly that band instead of the fixed default.
+- **Profile-matched decoys:** shape the fake keystroke transients from the user's own keyboard profile so decoys are hard to tell from real presses.
+
+Interface additions: `Masker.set_level(v)`, `Masker.set_band(low, high)`, `Masker.set_trigger(enabled)`, `find_min_effective_level(...)`, and an activity detector that gates playback.
+
+Why it scores: lowest-effective masking is both a security result and a usability result, which is exactly the "minimal friction" criterion.
+
+Tests: the sweep picks the lowest level meeting the target on a synthetic recovery curve; the tuned band covers the measured keyboard energy; trigger gating starts and stops playback with detected activity.
+
+**DONE (D2):** the masker auto-triggers on typing and is tuned to the measured keyboard band, and the before/after drop is still measured with it on.
 
 ---
 
-## 7. Predicted defense failures and fixes
+## 7. D3: Effectiveness report and multi-endpoint status
+
+Sell "deployable across an organization" concretely, not as a claim.
+- **Effectiveness report:** the defense panel shows measured off vs on accuracy, the current protection state (on/off, adaptive band, trigger mode), and the latest Exposure Check grade.
+- **Multi-endpoint status (a minimal fleet view):** each running defender periodically posts a heartbeat, and the dashboard lists the machines and whether each is protected.
+  - `POST /fleet/heartbeat` body `{machine_id, protected: bool, grade?: str}` -> `{ok: true}`; keep an in-memory registry with `last_seen`.
+  - `GET /fleet` -> `[{machine_id, protected, grade, last_seen}]`.
+  - For the demo, run the defender on two or three team laptops so the fleet view shows real machines. Honest scope: this demonstrates scale across endpoints, not high request throughput.
+
+Tests: `POST /fleet/heartbeat` then `GET /fleet` round-trips a machine's status; stale entries are marked.
+
+**DONE (D3):** the dashboard shows measured protection, the current protection state, and a status view listing two or more machines.
+
+---
+
+## 8. Server and UI integration
+
+Routes (defined here, wired in `server.py`):
+- `POST /defense/on`, `POST /defense/off` (adaptive masker), `GET /defense/measure`.
+- `POST /exposure/check`, `GET /exposure/last`.
+- `POST /fleet/heartbeat`, `GET /fleet`.
+
+Dashboard defense panel (built in `app.js` per BUILD_FRONTEND, against these contracts):
+- An Exposure Check button that shows the grade (big A to F), the reasons, and the recommendations.
+- A masker toggle showing the adaptive band and trigger state.
+- The before/after accuracy bars, animating the "on" bar cratering when the masker turns on.
+- The fleet status list.
+
+---
+
+## 9. Demo moment (about two of three minutes on defense)
+
+1. Attack, fast (about 45s): a judge types, Clack recovers it live from sound. "This is the threat, and it is real: 93% over a Zoom call in the research."
+2. Exposure Check (about 30s): run it on that sample, show the F grade and the reasons. "Any org can run this on every laptop to find who is exposed."
+3. Turn on protection (about 45s): flip the adaptive masker, the judge types the same thing, the recovered text turns to garbage and the accuracy bar craters. "Protection kicks in only while you type, tuned to your keyboard."
+4. Fleet view (about 20s): show the defender running on two or three machines. "Deployable across every endpoint in an organization."
+Close on the before/after bars and the fleet: "A measured, deployable defense against acoustic surveillance."
+
+---
+
+## 10. Predicted failures and fixes
 
 | Problem | Fix |
 |---|---|
-| Masker barely dents accuracy | Raise `MASKER_LEVEL`, widen or re-center `MASKER_BAND_HZ` onto the measured keystroke band, and add more frequent fake transients. Confirm OS audio processing is off so the masker is actually in the recording. |
-| OS cancels the masker (echo cancellation) | Open the input stream raw, disable echo cancellation / noise suppression / auto gain; verify by recording with the masker on and inspecting the spectrogram. |
-| Both runs look the same | Ensure the same fixed `text` is typed both times and the model and mic settings are identical between runs. |
-| Masker annoys the room | Lower the level; it only needs to reach the co-located mic. |
+| Masker barely dents accuracy | Raise `MASKER_LEVEL`, re-tune the adaptive band onto the measured keystroke band, add more decoys; confirm OS audio processing is off so the masker is actually recorded. |
+| Exposure grade looks random | Base it primarily on real attack recovery `R`, with SNR as a tiebreaker; calibrate the bands on a couple of known samples. |
+| Trigger gating cuts masking late (first keystrokes leak) | Start masking on the first detected onset and keep a short hangover; for the demo, pre-arm the masker just before typing. |
+| Fleet view empty on stage | Pre-start the defender on the other laptops; mark stale heartbeats but keep last-known status visible. |
+| Both measurement runs look the same | Same fixed `text` both times, identical model and mic settings. |
 
-## 8. DONE for the defense
+## 11. DONE for the defense component
 
-- `defense.py` plays a band-limited masker with fake transients through the Mac speakers and stops cleanly.
-- `measure()` returns off vs on accuracy over the same fixed text, with a clear, reproducible drop.
-- The dashboard toggle and before/after bars work live, and the effect is unmistakable on screen.
+- Base masker plus measurement work (section 4).
+- D1 Exposure Check returns a real risk grade with reasons and recommendations.
+- D2 adaptive, trigger-based masker tunes to the keyboard and plays only while typing.
+- D3 effectiveness report and a two-plus machine fleet view work live.
+- The defense demo runs end to end and occupies about two thirds of the three-minute demo.

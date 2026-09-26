@@ -47,12 +47,21 @@ Covers files: `capture.py`, `keylog.py`, `prompts.py`, `session.py`, `stream.py`
 
 ## 6. Live streaming decode (`stream.py`)
 
+- **Ambient calibration first.** `calibrate_ambient(reader, seconds=AMBIENT_CALIB_S)`: at attack startup, record `AMBIENT_CALIB_S` (2 s) of a quiet room, measure the energy distribution, and set the onset threshold dynamically (an effective `ONSET_K` for the current room) instead of the static default. The room is noisy at a hackathon, and the whole attack begins with onset detection, so this is not optional. Expose a "calibrated" flag and the measured noise floor for the dashboard and preflight.
 - `class LiveDecoder`:
-  - Holds the loaded model and a `StreamReader`.
-  - Runs a loop that continuously calls `detect_onsets` on the tail of the rolling buffer; when a new onset clears the debounce, cut its window, featurize, classify, and emit `{"key": best, "confidence": p, "topk": [[key,p],...], "t": perf_now, "latency_ms": ...}` via an async callback.
+  - Holds the loaded model (baseline or CNN) and a `StreamReader`.
+  - Runs `calibrate_ambient` once, then a loop that continuously calls `detect_onsets` (with the calibrated threshold) on the tail of the rolling buffer; when a new onset clears the debounce, cut the onset-centered window, featurize, classify, and emit `{"key": best, "confidence": p, "topk": [[key,p],...], "t": perf_now, "latency_ms": ...}` via an async callback.
   - Maintains the running recovered string and exposes it.
-  - Second mode `event_mode=True`: use `keylog` timestamps instead of audio onsets, for one guaranteed-clean demo run.
+  - **Onset debug mode:** optionally emit detected-peak markers and the current threshold so the dashboard can show onsets in real time (invaluable for tuning in the room).
+  - Second mode `event_mode=True`: use `keylog` timestamps instead of audio onsets, for one guaranteed-clean demo run. This mode is the ONLY place `stream` touches key events, and it is off by default (see mode separation in section 8).
 - Measure and log end-to-end latency per key. Target under ~1 second; if high, shrink the buffer and Mel resolution first.
+
+### Mode separation (provable mic-only attack)
+
+The attack must be provably keyboard-event-free. Enforce it in code:
+- **Attack mode:** the pynput listener is never instantiated (`ATTACK_DISABLES_KEYLOGGER=True`). The only exception is the explicit `event_mode=True` clean-run, which the operator turns on deliberately and which the dashboard clearly labels.
+- **Trainer mode:** mic on, key capture on, used only to make labeled samples.
+- The server exposes the current input-source state (see `/status`) so the dashboard can show `Microphone: ACTIVE, Keyboard Events: DISABLED`. This is both correct engineering and the answer to "how do I know you are not reading the keyboard".
 
 ## 7. Language-model correction (`correct.py`)
 
@@ -94,20 +103,34 @@ Mount the UI as static files and expose these routes.
 - `POST /defense/on` and `POST /defense/off` toggle the masker.
 - `GET /defense/measure` -> `{off_acc, on_acc}` for the before/after bars.
 
-### Health
-- `GET /health` -> `{status:"ok", device:"cuda|mps|cpu", model_loaded: bool}`.
+### Preflight / status (do not discover a broken dependency while a judge is standing there)
+- `GET /status` -> a full readiness report, each item pass/fail with detail:
+  ```json
+  {
+    "microphone": {"ok": true, "name": "MacBook Microphone"},
+    "sample_rate": {"ok": true, "value": 44100},
+    "keyboard_permission": {"ok": true},
+    "model": {"ok": true, "name": "blue-v3"},
+    "attack_keylogger": {"ok": true, "state": "DISABLED"},
+    "speaker": {"ok": true},
+    "compute": {"ok": true, "device": "mps"},
+    "ambient_calibration": {"ok": true, "noise_floor": 0.002}
+  }
+  ```
+- `scripts/preflight.py`: run the same checks from the terminal and print the checklist. Run it before every demo. Treat any failed item as blocking.
 
 ### WebSocket rules
 - Never block the event loop. Run capture and decode in background tasks or threads; push to the socket from an async queue.
 - If a client is slow, drop `audio` frames (keep the latest), never drop `key` messages.
 
-Tests (`test_server.py`, httpx + FastAPI `TestClient` + `pytest-asyncio`): `GET /` and `GET /trainer` return 200; `GET /health` reports a device; the attack WebSocket handshakes and forwards a synthetic key message; trainer start/stop round-trips a session.
+Tests (`test_server.py`, httpx + FastAPI `TestClient` + `pytest-asyncio`): `GET /` and `GET /trainer` return 200; `GET /status` reports each item and shows the attack keylogger DISABLED; the attack WebSocket handshakes and forwards a synthetic key message; trainer start/stop round-trips a session.
 
 ## 9. Running
 
-- `python scripts/serve.py` launches uvicorn (`server:app`) on `127.0.0.1:8000`, prints the trainer and dashboard URLs.
+- `python scripts/serve.py` launches uvicorn (`server:app`) on `127.0.0.1:8000`, prints the trainer and dashboard URLs. It calls `ensure_dirs()` (from `config_types`) at startup.
+- `python scripts/preflight.py` runs the readiness checklist. Run it before every demo.
 - Document in the README: pin the mic with `/devices`, grant input monitoring, open `/trainer` to collect, `run_train.py` to train, then `/` to attack.
 
 ## 10. DONE for the backend
 
-- `serve.py` starts; `/trainer` collects auto-labeled sessions; `/` streams live predictions over the WebSocket; `/health` reports the device; correction runs locally with no network; all `test_server.py` tests pass.
+- `serve.py` starts; `/trainer` collects auto-labeled sessions; the live attack runs with ambient calibration and the pynput listener provably not instantiated in attack mode; `/` streams live predictions over the WebSocket; `/status` and `preflight.py` report full readiness; correction runs locally with no network; all `test_server.py` tests pass.
