@@ -213,5 +213,7 @@ select, input[type="text"] {
 @media (max-width: 860px) {
   :root { --pad: 24px; }
   .grid > [class^="col-"] { grid-column: span 12; }
-  .topbar nav { display: none; }
+  /* Keep nav visible even when narrow: losing it strands you on a subpage. */
+  .topbar { flex-wrap: wrap; row-gap: 8px; }
+  .topbar nav { gap: 16px; }
 }

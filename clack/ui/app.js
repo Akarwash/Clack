@@ -485,12 +485,102 @@
   }
 
   // ---- Wire up -------------------------------------------------------------
+  // ---- Record & decode (robust offline attack; the demo path in the dashboard)
+  var capturing = false, audioCtx = null, micStream = null, srcNode = null, proc = null, recChunks = [];
+
+  async function startRecord() {
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: {
+        echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+      srcNode = audioCtx.createMediaStreamSource(micStream);
+      proc = audioCtx.createScriptProcessor(4096, 1, 1);
+      recChunks = [];
+      proc.onaudioprocess = function (e) { recChunks.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
+      var mute = audioCtx.createGain(); mute.gain.value = 0;
+      srcNode.connect(proc); proc.connect(mute); mute.connect(audioCtx.destination);
+      capturing = true;
+      $("recordBtn").textContent = "Stop & decode";
+      $("recNote").textContent = "recording... type now";
+      $("liveDot").className = "status-dot live"; $("liveLabel").textContent = "REC";
+      $("startBtn").disabled = true;
+    } catch (e) { $("recNote").textContent = "mic error: " + (e.message || e); }
+  }
+
+  async function stopRecordAndDecode() {
+    capturing = false;
+    if (proc) { proc.disconnect(); } if (srcNode) { srcNode.disconnect(); }
+    if (micStream) { micStream.getTracks().forEach(function (t) { t.stop(); }); }
+    var rate = audioCtx ? audioCtx.sampleRate : 44100;
+    var merged = concatFloat(recChunks);
+    if (audioCtx) { try { await audioCtx.close(); } catch (e) {} }
+    $("liveDot").className = "status-dot"; $("liveLabel").textContent = "IDLE";
+    $("startBtn").disabled = false;
+    $("recordBtn").textContent = "Record & decode";
+    if (!merged.length) { $("recNote").textContent = "no audio captured"; return; }
+    $("recNote").textContent = "decoding...";
+    try {
+      var at44 = await resampleTo44k(merged, rate);
+      var blob = encodeWav16(at44, 44100);
+      var params = new URLSearchParams({ model: $("modelSel").value || "", correct: "true", top_n: "3" });
+      var r = await fetch("/decode?" + params.toString(), {
+        method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: blob });
+      var j = await r.json();
+      if (!j.ok) { $("recNote").textContent = j.detail || "decode failed"; return; }
+      renderDecode(j);
+    } catch (e) { $("recNote").textContent = "decode error: " + (e.message || e); }
+  }
+
+  function renderDecode(j) {
+    if (!j.n_presses) { $("recNote").textContent = j.detail || "no keystrokes detected"; return; }
+    $("recNote").textContent = j.n_presses + " keys · " + j.model + " · " + j.latency_ms + "ms";
+    state.raw = j.per_key.map(function (row) {
+      var best = row[0] || ["", 0];
+      return { ch: best[0] === "space" ? " " : best[0], conf: best[1] || 0 };
+    });
+    state.lattice = j.per_key.map(function (row) { return row.map(function (c) { return c[0]; }); });
+    state.conf3 = (j.per_key[j.per_key.length - 1] || []).slice(0, 3);
+    state.corrected = j.corrected || "";
+    $("corrText").textContent = state.corrected;
+    j.per_key.forEach(function (row) { if (row[0]) { state.kbdHighlight[row[0][0]] = 1.0; } });
+    updateSearchSpace();
+    renderRaw();
+    renderConf();
+  }
+
+  function concatFloat(list) {
+    var len = 0; list.forEach(function (c) { len += c.length; });
+    var out = new Float32Array(len); var o = 0;
+    list.forEach(function (c) { out.set(c, o); o += c.length; });
+    return out;
+  }
+  async function resampleTo44k(samples, rate) {
+    if (rate === 44100 || !samples.length) { return samples; }
+    var off = new OfflineAudioContext(1, Math.ceil(samples.length * 44100 / rate), 44100);
+    var buf = off.createBuffer(1, samples.length, rate); buf.getChannelData(0).set(samples);
+    var s = off.createBufferSource(); s.buffer = buf; s.connect(off.destination); s.start();
+    var rendered = await off.startRendering(); return rendered.getChannelData(0);
+  }
+  function encodeWav16(samples, sr) {
+    var buffer = new ArrayBuffer(44 + samples.length * 2); var view = new DataView(buffer);
+    function wr(o, s) { for (var i = 0; i < s.length; i++) { view.setUint8(o + i, s.charCodeAt(i)); } }
+    wr(0, "RIFF"); view.setUint32(4, 36 + samples.length * 2, true); wr(8, "WAVE");
+    wr(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, sr, true); view.setUint32(28, sr * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    wr(36, "data"); view.setUint32(40, samples.length * 2, true);
+    var o = 44;
+    for (var i = 0; i < samples.length; i++) { var v = Math.max(-1, Math.min(1, samples[i])); view.setInt16(o, v < 0 ? v * 0x8000 : v * 0x7FFF, true); o += 2; }
+    return new Blob([view], { type: "audio/wav" });
+  }
+  async function toggleRecord() { if (!capturing) { await startRecord(); } else { await stopRecordAndDecode(); } }
+
   function wire() {
     applyTheme(safeGet("clack_theme") === "dark" ? "dark" : "light");
     $("themeBtn").addEventListener("click", toggleTheme);
     document.addEventListener("keydown", function (e) {
       if ((e.key === "d" || e.key === "D") && e.target.tagName !== "INPUT") { toggleTheme(); }
     });
+    $("recordBtn").addEventListener("click", toggleRecord);
     $("startBtn").addEventListener("click", startAttack);
     $("stopBtn").addEventListener("click", stopAttack);
     $("shieldBtn").addEventListener("click", toggleShield);

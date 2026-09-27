@@ -14,9 +14,10 @@
       <span class="wordmark">Clack</span>
       <span class="ver">v0.1.0</span>
     </div>
-    <nav>
-      <a href="/trainer">Trainer</a>
+    <nav style="display:flex;gap:20px;flex-wrap:wrap;">
       <a href="/" class="on">Attack</a>
+      <a href="/trainer">Trainer</a>
+      <a href="/demo">Demo</a>
     </nav>
     <div class="right">
       <span class="status-dot" id="liveDot"><span class="dot"></span><span class="micro" id="liveLabel">IDLE</span></span>
@@ -47,12 +48,14 @@
 
     <!-- Controls -->
     <section class="controls" style="margin:18px 0;">
-      <button class="btn" id="startBtn">Start attack</button>
+      <button class="btn" id="recordBtn">Record &amp; decode</button>
+      <button class="btn ghost" id="startBtn">Live attack</button>
       <button class="btn ghost" id="stopBtn" disabled>Stop</button>
       <label class="micro" for="modelSel">Model</label>
       <select id="modelSel">
         <option value="">loading...</option>
       </select>
+      <span class="note" id="recNote"></span>
       <label class="micro"><input type="checkbox" id="cleanRun" /> Clean run (event mode)</label>
       <label class="micro"><input type="checkbox" id="synthSrc" /> Wiring demo (synthetic)</label>
       <span class="badge" id="synthBadge" style="display:none;">synthetic wiring stream</span>

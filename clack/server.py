@@ -130,6 +130,15 @@ def create_app() -> FastAPI:
     app.state.corrector = None
     app.state.models = {}
 
+    # Serve fresh assets: the UI iterates a lot, and a cached style.css or app.js
+    # silently hides changes (e.g. a nav the browser kept from an old stylesheet).
+    # no-cache forces revalidation, so every load reflects the current files.
+    @app.middleware("http")
+    async def _no_cache(request: "Request", call_next):
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return response
+
     # ---- Pages ----------------------------------------------------------------
     @app.get("/")
     def index() -> "FileResponse":
