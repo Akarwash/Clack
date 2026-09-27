@@ -90,6 +90,7 @@
       source: synthetic ? "synthetic" : "mic",
       event_mode: $("cleanRun").checked,
     };
+    if ($("liveMic").value) { body.input_device = $("liveMic").value; }
     var sel = $("modelSel").value;
     if (sel) { body.model_name = sel; }
 
@@ -354,38 +355,19 @@
   }
 
   // ---- Defense / exposure / fleet -----------------------------------------
-  var shieldOn = false;
-  async function toggleShield() {
-    try {
-      if (!shieldOn) {
-        var r = await fetch("/defense/on", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-        var d = await r.json();
-        shieldOn = !!d.ok && d.on;
-        $("shieldState").textContent = shieldOn ? ("on, level " + d.level + ", band " + (d.band || []).join("-") + " Hz") : ("failed: " + (d.detail || ""));
-        $("shieldBtn").textContent = shieldOn ? "Disarm shield" : "Arm shield";
-      } else {
-        await fetch("/defense/off", { method: "POST" });
-        shieldOn = false;
-        $("shieldState").textContent = "off";
-        $("shieldBtn").textContent = "Arm shield";
-      }
-    } catch (e) { $("shieldState").textContent = "error: " + e.message; }
-    refreshDefenseMeasure();
-  }
-
   function renderDefense(d) {
     var off = Math.round((d.off || 0) * 100), on = Math.round((d.on || 0) * 100);
     $("offBar").style.width = off + "%";
     $("onBar").style.width = on + "%";
     var db = d.masker_key_ratio_db;
-    $("defNote").textContent = "recovery " + off + "% to " + on + "%" +
+    $("defNote").textContent = "Software-mixed evaluation: recovery " + off + "% to " + on + "%" +
       (db != null && isFinite(db) ? (", masker/key " + db.toFixed(1) + " dB") : "");
   }
 
   async function refreshDefenseMeasure() {
     try {
       var r = await fetch("/defense/measure");
-      if (r.status === 404) { $("defNote").textContent = "No before/after measurement yet."; return; }
+      if (r.status === 404) { $("defNote").textContent = "Software-mixed evaluation: no measurement yet."; return; }
       renderDefense(await r.json());
     } catch (e) {}
   }
@@ -496,9 +478,33 @@
   // ---- Record & decode (robust offline attack; the demo path in the dashboard)
   var capturing = false, audioCtx = null, micStream = null, srcNode = null, proc = null, recChunks = [];
 
+  async function refreshMicrophones(permission) {
+    try {
+      if (permission !== false) {
+        var grant = await navigator.mediaDevices.getUserMedia({ audio: true });
+        grant.getTracks().forEach(function(t) { t.stop(); });
+      }
+      var prev = $("recordMic").value;
+      var browserDevices = await navigator.mediaDevices.enumerateDevices();
+      $("recordMic").replaceChildren(new Option("system default (unverified)", ""));
+      browserDevices.filter(function(d) { return d.kind === "audioinput"; }).forEach(function(d) {
+        $("recordMic").add(new Option((d.label || "microphone") + (/BlackHole 2ch/.test(d.label) ? " [protected route]" : " [physical/unverified]"), d.deviceId));
+      });
+      $("recordMic").value = prev;
+      var response = await fetch("/devices"); var backendDevices = await response.json();
+      var livePrev = $("liveMic").value;
+      $("liveMic").replaceChildren(new Option("configured physical mic", ""));
+      backendDevices.forEach(function(d) { $("liveMic").add(new Option(d.name, d.name)); });
+      $("liveMic").value = livePrev;
+    } catch(e) { $("recNote").textContent = "Microphone discovery: " + e.message; }
+  }
+
   async function startRecord() {
     try {
+      var deviceId = $("recordMic").value || undefined;
+      await window.ClackProtection.checkRecordingDevice(deviceId);
       micStream = await navigator.mediaDevices.getUserMedia({ audio: {
+        deviceId: deviceId ? { exact: deviceId } : undefined,
         echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
       audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
       srcNode = audioCtx.createMediaStreamSource(micStream);
@@ -592,7 +598,8 @@
     $("recordBtn").addEventListener("click", toggleRecord);
     $("startBtn").addEventListener("click", startAttack);
     $("stopBtn").addEventListener("click", stopAttack);
-    $("shieldBtn").addEventListener("click", toggleShield);
+    $("refreshMics").addEventListener("click", refreshMicrophones);
+    refreshMicrophones(false);
     $("measureBtn").addEventListener("click", runDefenseMeasure);
     $("exposureBtn").addEventListener("click", runExposure);
 

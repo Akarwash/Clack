@@ -14,6 +14,8 @@ Owner: BUILD_TRAINER.
 from __future__ import annotations
 
 import time
+import ctypes
+import sys
 from typing import Optional
 
 import config
@@ -61,6 +63,16 @@ def check_permission() -> None:
         Monitoring and Accessibility for the terminal or app).
     """
     try:  # pragma: no cover - depends on host OS permissions
+        if sys.platform == "darwin":
+            # Read permission state without creating a listener or prompting.
+            # /status calls this frequently, including during microphone-only use.
+            services = ctypes.CDLL("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+            graphics = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+            services.AXIsProcessTrusted.restype = ctypes.c_bool
+            graphics.CGPreflightListenEventAccess.restype = ctypes.c_bool
+            if not services.AXIsProcessTrusted() or not graphics.CGPreflightListenEventAccess():
+                raise RuntimeError("Accessibility or Input Monitoring permission is missing")
+            return
         from pynput import keyboard
 
         listener = keyboard.Listener(on_press=lambda _k: None)

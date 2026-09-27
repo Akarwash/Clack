@@ -86,6 +86,11 @@ MASKER_TRIGGERED = False         # Standard Shield = continuous while armed (gua
 EXPOSURE_GRADE_BANDS = {"A": 0.15, "B": 0.25, "C": 0.40, "D": 0.60}  # Clack heuristic grade by recovery R; above D = F. A project heuristic, not an industry standard
 FLEET_REPORTS_DIR = "data/reports"  # D3: each endpoint SAVES an audit report here; the dashboard reads saved reports (no live heartbeat infrastructure)
 
+# Protected virtual microphone (macOS, manually configured BlackHole aggregate)
+VIRTUAL_MIC_BRIDGE = "Clack Protected Bridge"
+VIRTUAL_MIC_BLOCKSIZE = 512
+VIRTUAL_MIC_GAIN = 0.7
+
 # Evaluation (see BUILD_EVAL.md)
 EVAL_TOPK = [1, 3, 5]            # top-k recall levels to report
 

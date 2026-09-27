@@ -14,15 +14,28 @@ import asyncio
 import io
 import os
 import time
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 import config
 from clack import capture, exposure, prompts, session
 from clack.config_types import ensure_dirs
+from clack.virtual_mic import VirtualMic, discover_devices
+
+
+class VirtualMicStart(BaseModel):
+    """Backend aggregate names are separate from browser microphone IDs."""
+    bridge_device: str = config.VIRTUAL_MIC_BRIDGE
+    level: float = Field(default=config.MASKER_LEVEL, ge=.1, le=1, allow_inf_nan=False)
+
+
+class VirtualMicSettings(BaseModel):
+    level: float = Field(ge=.1, le=1, allow_inf_nan=False)
 
 _UI_DIR = os.path.join(os.path.dirname(__file__), "ui")
 
@@ -122,9 +135,25 @@ def create_app() -> FastAPI:
         The wired application instance.
     """
     ensure_dirs()
-    app = FastAPI(title="Clack", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(application):
+        try:
+            yield
+        finally:
+            await asyncio.to_thread(application.state.virtual_mic.stop)
+            if application.state.masker is not None:
+                await asyncio.to_thread(application.state.masker.stop)
+            attack = application.state.attack
+            if attack.get("decoder") is not None:
+                await asyncio.to_thread(attack["decoder"].stop)
+            if attack.get("task") is not None:
+                attack["task"].cancel()
+
+    app = FastAPI(title="Clack", version="0.1.0", lifespan=lifespan)
     app.state.attack = {"running": False, "source": None, "queue": None, "task": None, "decoder": None, "event_mode": False, "text": ""}
     app.state.masker = None
+    app.state.virtual_mic = VirtualMic()
+    app.state.protection_lock = asyncio.Lock()
     app.state.last_exposure = None
     app.state.last_defense = None
     app.state.corrector = None
@@ -170,16 +199,19 @@ def create_app() -> FastAPI:
 
     @app.post("/trainer/start")
     async def trainer_start(body: dict) -> "JSONResponse":
-        try:
-            sid = session.start_session(
-                keyboard_id=body.get("keyboard_id", "blue"),
-                typist=body.get("typist", "unknown"),
-                purpose=body.get("purpose", "train"),
-                mode=body.get("mode", "paced"),
-            )
-            return JSONResponse({"session_id": sid})
-        except (PermissionError, RuntimeError, ValueError) as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
+        async with app.state.protection_lock:
+            if app.state.virtual_mic.running:
+                return JSONResponse({"ok": False, "detail": "Stop the virtual mic before collecting training data"}, status_code=409)
+            try:
+                sid = session.start_session(
+                    keyboard_id=body.get("keyboard_id", "blue"),
+                    typist=body.get("typist", "unknown"),
+                    purpose=body.get("purpose", "train"),
+                    mode=body.get("mode", "paced"),
+                )
+                return JSONResponse({"session_id": sid})
+            except (PermissionError, RuntimeError, ValueError) as exc:
+                return JSONResponse({"error": str(exc)}, status_code=400)
 
     @app.post("/trainer/stop")
     async def trainer_stop(body: dict) -> "JSONResponse":
@@ -195,48 +227,54 @@ def create_app() -> FastAPI:
     # ---- Attack (live) --------------------------------------------------------
     @app.post("/attack/start")
     async def attack_start(body: dict) -> "JSONResponse":
-        source = body.get("source", "mic")
-        event_mode = bool(body.get("event_mode", False))
-        state = app.state.attack
-        if state["running"]:
-            return JSONResponse({"ok": False, "detail": "attack already running"}, status_code=400)
+        async with app.state.protection_lock:
+            source = body.get("source", "mic")
+            event_mode = bool(body.get("event_mode", False))
+            state = app.state.attack
+            if state["running"]:
+                return JSONResponse({"ok": False, "detail": "attack already running"}, status_code=400)
 
-        queue: asyncio.Queue = asyncio.Queue()
-        state.update({"running": True, "source": source, "queue": queue, "event_mode": event_mode, "text": ""})
+            queue: asyncio.Queue = asyncio.Queue()
+            state.update({"running": True, "source": source, "queue": queue, "event_mode": event_mode, "text": ""})
 
-        if source == "synthetic":
-            async def _produce() -> None:
-                for frame in _synthetic_frames():
-                    await queue.put(frame)
-                    await asyncio.sleep(0.05)
-            state["task"] = asyncio.create_task(_produce())
-            return JSONResponse({"ok": True, "source": "synthetic"})
+            if source == "synthetic":
+                async def _produce() -> None:
+                    for frame in _synthetic_frames():
+                        await queue.put(frame)
+                        await asyncio.sleep(0.05)
+                state["task"] = asyncio.create_task(_produce())
+                return JSONResponse({"ok": True, "source": "synthetic"})
 
-        # Real microphone path.
-        model_name = body.get("model_name")
-        model_dir = os.path.join(config.MODELS_DIR, model_name) if model_name else _find_default_model()
-        if not model_dir or not os.path.isdir(model_dir):
-            state["running"] = False
-            return JSONResponse({"ok": False, "detail": "no trained model available"}, status_code=400)
+            # Real microphone path.
+            input_device = body.get("input_device") or config.INPUT_DEVICE
+            if app.state.virtual_mic.running and input_device != "BlackHole 2ch":
+                state["running"] = False
+                return JSONResponse({"ok": False, "detail": "Virtual mic owns the physical microphone; select BlackHole 2ch for the live attack"}, status_code=409)
+            model_name = body.get("model_name")
+            model_dir = os.path.join(config.MODELS_DIR, model_name) if model_name else _find_default_model()
+            if not model_dir or not os.path.isdir(model_dir):
+                state["running"] = False
+                return JSONResponse({"ok": False, "detail": "no trained model available"}, status_code=400)
 
-        try:  # pragma: no cover - requires a real mic and model
-            from clack import model as _model
-            from clack.stream import LiveDecoder
+            try:  # pragma: no cover - requires a real mic and model
+                from clack import model as _model
+                from clack.stream import LiveDecoder
 
-            loaded = _model.load_model(model_dir)
-            loop = asyncio.get_event_loop()
+                loaded = _model.load_model(model_dir)
+                loop = asyncio.get_event_loop()
 
-            def _on_guess(guess) -> None:
-                state["text"] = state.get("text", "") + (" " if guess.key == "space" else guess.key)
-                loop.call_soon_threadsafe(queue.put_nowait, guess.as_message(state["text"]))
+                def _on_guess(guess) -> None:
+                    state["text"] = state.get("text", "") + (" " if guess.key == "space" else guess.key)
+                    loop.call_soon_threadsafe(queue.put_nowait, guess.as_message(state["text"]))
 
-            decoder = LiveDecoder(loaded, on_guess=_on_guess, event_mode=event_mode)
-            decoder.start()
-            state["decoder"] = decoder
-            return JSONResponse({"ok": True, "source": "mic", "model": os.path.basename(model_dir)})
-        except Exception as exc:  # pragma: no cover
-            state["running"] = False
-            return JSONResponse({"ok": False, "detail": str(exc)}, status_code=500)
+                decoder = LiveDecoder(loaded, on_guess=_on_guess, device=input_device, event_mode=event_mode)
+                decoder.start()
+                state["decoder"] = decoder
+                state["input_device"] = input_device
+                return JSONResponse({"ok": True, "source": "mic", "model": os.path.basename(model_dir)})
+            except Exception as exc:  # pragma: no cover
+                state["running"] = False
+                return JSONResponse({"ok": False, "detail": str(exc)}, status_code=500)
 
     @app.post("/attack/stop")
     async def attack_stop() -> dict:
@@ -281,24 +319,65 @@ def create_app() -> FastAPI:
         from clack.defense import Masker
 
         body = body or {}
-        try:
-            masker = app.state.masker or Masker()
-            if body.get("level") is not None:
-                masker.set_level(float(body["level"]))
-            band = body.get("band")
-            if band:
-                masker.set_band(int(band[0]), int(band[1]))
-            masker.start()
-            app.state.masker = masker
-            return JSONResponse({"ok": True, "on": masker.is_on(), "level": masker.level, "band": list(masker.band)})
-        except Exception as exc:  # pragma: no cover - requires audio output
-            return JSONResponse({"ok": False, "detail": str(exc)}, status_code=500)
+        async with app.state.protection_lock:
+            if app.state.virtual_mic.running:
+                return JSONResponse({"ok": False, "detail": "Stop Virtual Mic before starting Speaker Masker"}, status_code=409)
+            try:
+                masker = app.state.masker or Masker()
+                if body.get("level") is not None:
+                    masker.set_level(float(body["level"]))
+                band = body.get("band")
+                if band:
+                    masker.set_band(int(band[0]), int(band[1]))
+                await asyncio.to_thread(masker.start)
+                app.state.masker = masker
+                return JSONResponse({"ok": True, "on": masker.is_on(), "level": masker.level, "band": list(masker.band)})
+            except Exception as exc:  # pragma: no cover - requires audio output
+                return JSONResponse({"ok": False, "detail": str(exc)}, status_code=500)
 
     @app.post("/defense/off")
     async def defense_off() -> dict:
-        if app.state.masker is not None:
-            app.state.masker.stop()
+        async with app.state.protection_lock:
+            if app.state.masker is not None:
+                await asyncio.to_thread(app.state.masker.stop)
         return {"ok": True, "on": False}
+
+    # A separate route and lifecycle: the speaker masker never changes mode.
+    @app.get("/virtual-mic/devices")
+    async def virtual_devices() -> dict:
+        return await asyncio.to_thread(discover_devices)
+
+    @app.get("/virtual-mic/status")
+    async def virtual_status() -> dict:
+        report = await asyncio.to_thread(app.state.virtual_mic.status)
+        report["speaker_on"] = bool(app.state.masker and app.state.masker.is_on())
+        return report
+
+    @app.post("/virtual-mic/start")
+    async def virtual_start(body: VirtualMicStart) -> JSONResponse:
+        async with app.state.protection_lock:
+            attack = app.state.attack
+            if app.state.masker and app.state.masker.is_on():
+                return JSONResponse({"ok": False, "detail": "Stop Speaker Masker before starting Virtual Mic"}, status_code=409)
+            if session.active_sessions() or (attack.get("running") and attack.get("source") == "mic" and attack.get("input_device") != "BlackHole 2ch"):
+                return JSONResponse({"ok": False, "detail": "Stop physical-mic training or live attack before starting Virtual Mic"}, status_code=409)
+            try:
+                result = await asyncio.to_thread(app.state.virtual_mic.start, body.bridge_device, body.level)
+                return JSONResponse(result)
+            except (ValueError, RuntimeError, OSError) as exc:
+                return JSONResponse({"ok": False, "detail": str(exc)}, status_code=400)
+
+    @app.post("/virtual-mic/settings")
+    async def virtual_settings(body: VirtualMicSettings) -> dict:
+        async with app.state.protection_lock:
+            app.state.virtual_mic.set_level(body.level)
+        return await virtual_status()
+
+    @app.post("/virtual-mic/stop")
+    async def virtual_stop() -> dict:
+        async with app.state.protection_lock:
+            await asyncio.to_thread(app.state.virtual_mic.stop)
+        return await virtual_status()
 
     @app.get("/defense/measure")
     def defense_measure() -> "JSONResponse":
@@ -493,7 +572,11 @@ def build_status(app: object) -> dict:
     # Microphone.
     try:
         devices = capture.list_input_devices()
-        report["microphone"] = {"ok": bool(devices), "name": devices[0]["name"] if devices else None}
+        active_attack = getattr(app.state, "attack", {})
+        selected = active_attack.get("input_device") if active_attack.get("running") else config.INPUT_DEVICE
+        matches = [d for d in devices if d["name"] == selected]
+        report["microphone"] = {"ok": bool(matches) if selected else bool(devices),
+                                "name": selected or (devices[0]["name"] if devices else None)}
     except Exception as exc:
         report["microphone"] = {"ok": False, "detail": str(exc)}
 

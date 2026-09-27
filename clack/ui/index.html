@@ -55,6 +55,9 @@
       <select id="modelSel">
         <option value="">loading...</option>
       </select>
+      <label class="micro">Recording mic <select id="recordMic"><option value="">system default (unverified)</option></select></label>
+      <button class="btn ghost" id="refreshMics">Refresh microphones</button>
+      <label class="micro">Live mic <select id="liveMic"><option value="">configured physical mic</option></select></label>
       <span class="note" id="recNote"></span>
       <label class="micro"><input type="checkbox" id="cleanRun" /> Clean run (event mode)</label>
       <label class="micro"><input type="checkbox" id="synthSrc" /> Wiring demo (synthetic)</label>
@@ -115,10 +118,7 @@
         <hr class="rule" />
 
         <p class="section-label micro">Defense &middot; Protected Typing</p>
-        <div class="toggle-row">
-          <button class="btn" id="shieldBtn">Arm shield</button>
-          <span class="note" id="shieldState">off</span>
-        </div>
+        <section id="protectionControls"></section>
         <div class="toggle-row" style="margin-top:8px;">
           <select id="defSession" title="session to measure protection on"></select>
           <button class="btn ghost" id="measureBtn">Measure protection</button>
@@ -129,7 +129,7 @@
           <div class="bar-row"><span class="micro">recovery, masker on</span>
             <div class="bar-track"><div class="bar-fill accent" id="onBar" style="width:0%"></div></div></div>
         </div>
-        <p class="note" id="defNote">No before/after measurement yet.</p>
+        <p class="note" id="defNote">Software-mixed evaluation: no measurement yet.</p>
 
         <hr class="rule" />
 
@@ -147,6 +147,7 @@
   </main>
 
   <!-- Vanilla JS, no build step, no CDN. -->
+  <script src="protection.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

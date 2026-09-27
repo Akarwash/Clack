@@ -143,7 +143,7 @@ class LiveDecoder:
         self,
         model: object,
         on_guess: Optional[Callable[[StreamGuess], None]] = None,
-        device: Optional[int] = None,
+        device: Optional[int | str] = None,
         event_mode: bool = False,
     ) -> None:
         from clack.capture import StreamReader
