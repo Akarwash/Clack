@@ -18,7 +18,11 @@ let topN = 3;
 
 // Human-readable notes for the known demo models (measured held-out numbers).
 const MODEL_NOTES = {
-  "dak": "All 3 typists (aditya+josh+vishal). Held-out vs aditya: 78% top-1, 95% top-3.",
+  "dak": "All 3 typists, 1200 epochs (default). Held-out vs aditya: 95.6% top-1, 98.4% top-3.",
+  "dak-1200": "All 3 typists, 1200 epochs. vs aditya: 95.6% top-1 (best).",
+  "dak-900": "All 3 typists, 900 epochs. vs aditya: 95.3% top-1.",
+  "dak-600": "All 3 typists, 600 epochs (sweet spot). vs aditya: 94.8% top-1.",
+  "dak-300": "All 3 typists, 300 epochs. vs aditya: 92.2% top-1.",
   "dak-aditya": "Aditya's own typing only. Held-out vs aditya: 39% top-1, 70% top-3.",
   "dak-cold": "Cold attacker (josh+vishal, never heard aditya). True cross-typist vs aditya: 39% top-1, 69% top-3.",
 };
