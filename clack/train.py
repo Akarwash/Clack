@@ -129,7 +129,15 @@ def train_model(
     val_fraction: float = 0.3,
     epochs: Optional[int] = None,
 ) -> TrainResult:
-    """Train the CNN classifier and fit the centroid floor on a session split.
+    """Train the CNN classifier and fit the centroid floor.
+
+    Training runs a fixed cosine-annealed budget (``config.EPOCHS``) and keeps the
+    FINAL weights. It does NOT early-stop or select the best-val-loss epoch: an
+    earlier version did, and when the held-out val was a different typist than the
+    attack target, val loss plateaued within ~15 epochs and stopped training long
+    before the CNN had converged on the target's key sounds (capping held-out
+    top-1 near 15-30%). The model needs the full budget to converge (~130+ epochs);
+    cosine decay makes the final epoch a stable optimum rather than a lucky draw.
 
     Parameters
     ----------
@@ -138,11 +146,16 @@ def train_model(
     model_name : str
         Base name for the output model directories under ``config.MODELS_DIR``.
     val_session_ids : list of str or None, optional
-        Sessions to hold out for validation (default: a session-level fraction).
+        Sessions to hold out for validation reporting. ``None`` holds out a
+        session-level fraction. Pass an empty list ``[]`` for NO holdout: every
+        session trains the weights and the reported metrics are train-fit (the
+        real generalization number comes from :func:`clack.evaluate.evaluate_attack`
+        on a separate held-out recording). Held-out val is used for REPORTING
+        only, never to stop or select weights.
     val_fraction : float, optional
         Fraction of sessions to hold out when ``val_session_ids`` is ``None``.
     epochs : int or None, optional
-        Max epochs; defaults to ``config.EPOCHS``.
+        Training-budget epochs; defaults to ``config.EPOCHS``.
 
     Returns
     -------
@@ -159,7 +172,15 @@ def train_model(
     print(f"[train] device: {device}")
 
     ds = _dataset.load_dataset(dataset_path)
-    train_ds, val_ds = _dataset.split_by_session(ds, val_session_ids, val_fraction)
+    # Empty val list => no holdout: train on every session, report train-fit
+    # metrics. Generalization is measured separately by evaluate_attack.
+    no_holdout = val_session_ids is not None and len(val_session_ids) == 0
+    if no_holdout:
+        train_ds = val_ds = ds
+        print("[train] no validation holdout: training on all sessions "
+              "(reported metrics are train-fit)")
+    else:
+        train_ds, val_ds = _dataset.split_by_session(ds, val_session_ids, val_fraction)
     classes = ds.classes
     n_classes = len(classes)
 
@@ -181,15 +202,13 @@ def train_model(
     weights = torch.tensor(_dataset.class_weights(train_ds.y, n_classes), device=device)
     criterion = nn.CrossEntropyLoss(weight=weights)
     optimizer = torch.optim.Adam(net.parameters(), lr=config.LR, weight_decay=config.WEIGHT_DECAY)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=3)
-
-    val_x = torch.from_numpy(val_ds.X[:, None, :, :]).to(device)
-    val_y = torch.from_numpy(val_ds.y).to(device)
     max_epochs = epochs or config.EPOCHS
+    # Cosine anneal to zero over the full budget: LR decay converges the late
+    # epochs to a stable optimum, so the FINAL weights are trustworthy without
+    # best-val-loss selection (which, on a different-typist val, picked a barely
+    # trained epoch).
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_epochs)
 
-    best_state = None
-    best_val = float("inf")
-    patience = 0
     losses: list[float] = []
     n = train_ds.X.shape[0]
     rng = np.random.default_rng(config.SEED)
@@ -211,23 +230,9 @@ def train_model(
             epoch_loss += float(loss.detach()) * len(idx)
         epoch_loss /= n
         losses.append(epoch_loss)
+        scheduler.step()
 
-        net.eval()
-        with torch.no_grad():
-            val_loss = float(criterion(net(val_x), val_y))
-        scheduler.step(val_loss)
-        if val_loss < best_val - 1e-4:
-            best_val = val_loss
-            best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
-            patience = 0
-        else:
-            patience += 1
-            if patience >= config.EARLY_STOP_PATIENCE:
-                print(f"[train] early stop at epoch {epoch}")
-                break
-
-    if best_state is not None:
-        net.load_state_dict(best_state)
+    # Keep the FINAL weights (cosine schedule has annealed to a stable optimum).
 
     # Validation metrics.
     val_scores = net.scores(val_ds.X)
@@ -242,10 +247,13 @@ def train_model(
         "n_train": int(n),
         "n_val": int(val_ds.X.shape[0]),
         "val_sessions": sorted(set(val_ds.session_ids.tolist())),
+        "val_is_trainfit": no_holdout,
+        "epochs_run": len(losses),
     }
     per_key = metrics["per_key_accuracy"]
     worst = sorted(per_key.items(), key=lambda kv: kv[1])[:5]
-    print(f"[train] CNN val acc {metrics['val_accuracy']:.3f}  top-3 {metrics['val_top3_accuracy']:.3f}")
+    label = "train-fit" if no_holdout else "val"
+    print(f"[train] CNN {label} acc {metrics['val_accuracy']:.3f}  top-3 {metrics['val_top3_accuracy']:.3f}")
     print(f"[train] five worst keys: {worst}")
 
     model_dir = os.path.join(config.MODELS_DIR, model_name)

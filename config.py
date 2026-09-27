@@ -51,10 +51,10 @@ DROPOUT = 0.3
 
 # Training
 BATCH_SIZE = 64
-EPOCHS = 60
+EPOCHS = 150                    # fixed cosine-annealed budget; the CNN needs ~130+ epochs to converge on a board
 LR = 1e-3
 WEIGHT_DECAY = 1e-4
-EARLY_STOP_PATIENCE = 8
+EARLY_STOP_PATIENCE = 8         # retained for provenance snapshots; training no longer early-stops (see train.train_model)
 SPLIT_BY_SESSION = True         # validate on a SEPARATE recording session, never a random split of one session
 
 # Augmentation (train only)
