@@ -1,0 +1,5 @@
+{
+  "epochs": 900,
+  "schedule": "cosine-warm-restarts-300",
+  "note": "all-3-typist, 900 epochs (blind eval on aditya)"
+}
