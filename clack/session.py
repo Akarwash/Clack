@@ -239,6 +239,7 @@ def session_level(session_id: str) -> dict:
     recorder = state["recorder"]
     status = recorder.level_status() if hasattr(recorder, "level_status") else {"rms": 0.0, "silent_s": None, "alive": False}
     status["active"] = True
+    status["target_rms"] = config.TARGET_ONSET_RMS
     return status
 
 
