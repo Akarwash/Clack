@@ -123,6 +123,9 @@ class Recorder:
         # Live health tracking so the UI can show a level meter and detect a stall.
         self.last_level: float = 0.0
         self.last_callback_perf: Optional[float] = None
+        # Peak-hold: the loudest block RMS since the last meter read, so a keystroke
+        # transient between polls is not missed (the meter polls slower than blocks).
+        self._peak_since_read: float = 0.0
 
     def _callback(self, indata, frames, time_info, status) -> None:  # pragma: no cover - realtime
         """PortAudio callback: record timing on the first frame, then buffer."""
@@ -134,23 +137,32 @@ class Recorder:
             self._first_callback = False
         self.last_callback_perf = time.perf_counter()
         mono = indata[:, 0] if indata.ndim > 1 else indata
-        self.last_level = float(np.sqrt(np.mean(np.square(mono.astype(np.float64)))) if mono.size else 0.0)
+        rms = float(np.sqrt(np.mean(np.square(mono.astype(np.float64)))) if mono.size else 0.0)
+        self.last_level = rms
+        if rms > self._peak_since_read:
+            self._peak_since_read = rms
         self._queue.put(indata.copy())
 
     def level_status(self) -> dict:
-        """Return live capture health for the UI.
+        """Return live capture health for the UI, then reset the peak-hold.
+
+        The reported ``rms`` is the loudest block since the previous call (a
+        peak-hold), so a keystroke transient landing between polls still registers.
 
         Returns
         -------
         dict
-            ``{rms, peak_hint, silent_s, alive}`` where ``silent_s`` is the time
-            since the last audio block arrived (``None`` if none yet) and ``alive``
-            is ``True`` when audio arrived recently (within ~1s).
+            ``{rms, silent_s, alive}`` where ``rms`` is the peak block RMS since the
+            last read, ``silent_s`` is the time since the last audio block arrived
+            (``None`` if none yet), and ``alive`` is ``True`` when audio arrived
+            within ~1s.
         """
         now = time.perf_counter()
         silent_s = None if self.last_callback_perf is None else (now - self.last_callback_perf)
         alive = silent_s is not None and silent_s < 1.0
-        return {"rms": self.last_level, "silent_s": silent_s, "alive": alive}
+        peak = self._peak_since_read
+        self._peak_since_read = 0.0
+        return {"rms": peak, "silent_s": silent_s, "alive": alive}
 
     def _open_stream(self) -> None:  # pragma: no cover - requires a real device
         import sounddevice as sd
