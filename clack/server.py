@@ -140,6 +140,8 @@ def create_app() -> FastAPI:
         try:
             yield
         finally:
+            if application.state.claude_corrector is not None:
+                await application.state.claude_corrector.close()
             await asyncio.to_thread(application.state.virtual_mic.stop)
             if application.state.masker is not None:
                 await asyncio.to_thread(application.state.masker.stop)
@@ -157,6 +159,7 @@ def create_app() -> FastAPI:
     app.state.last_exposure = None
     app.state.last_defense = None
     app.state.corrector = None
+    app.state.claude_corrector = None
     app.state.models = {}
 
     # Serve fresh assets: the UI iterates a lot, and a cached style.css or app.js
@@ -451,6 +454,18 @@ def create_app() -> FastAPI:
     # ---- Correction (local, no network) ---------------------------------------
     @app.post("/correct")
     async def correct_route(body: dict) -> dict:
+        provider = body.get("provider", "local")
+        if provider == "claude":
+            from clack.claude_correct import ClaudeCorrector, validate_candidates
+            try:
+                candidates = validate_candidates(body.get("candidates"))
+            except ValueError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+            if app.state.claude_corrector is None:
+                app.state.claude_corrector = ClaudeCorrector()
+            return await app.state.claude_corrector.correct(candidates)
+        if provider != "local":
+            return JSONResponse({"detail": "Unknown correction provider"}, status_code=422)
         lattice = body.get("lattice", [])
         if app.state.corrector is None:
             from clack.correct import NgramCorrector

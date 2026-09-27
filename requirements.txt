@@ -18,3 +18,5 @@ pytest-asyncio==1.4.0
 hypothesis==6.168.1
 matplotlib==3.11.2
 nltk==3.10.3
+
+python-dotenv==1.2.3

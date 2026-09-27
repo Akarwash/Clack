@@ -1,7 +1,7 @@
 /* Clack Demo: record a clip, decode it with the chosen model, show the recovered
  * keystrokes, the language-model correction, and the password search-space
- * reduction. Capture and decode run locally (no network) against the FastAPI
- * backend on this same host. Owner: BUILD_FRONTEND (demo surface). */
+ * reduction. Audio and acoustic decoding stay local. Optional Claude correction
+ * sends only candidate text and probabilities through the backend to Anthropic. Owner: BUILD_FRONTEND (demo surface). */
 "use strict";
 
 const $ = (id) => document.getElementById(id);
@@ -23,6 +23,8 @@ results.before(comparison);
 comparison.append(results, protectedResults);
 
 let correctOn = true;
+let recordingGeneration = 0;
+let correctionControllers = [];
 let topN = 3;
 
 // Human-readable notes for the known demo models (measured held-out numbers).
@@ -244,6 +246,9 @@ recBtn.addEventListener("click", async () => {
     try {
       statusEl.textContent = "opening both microphones…";
       await startCapture();
+      recordingGeneration++;
+      correctionControllers.forEach(controller => controller.abort());
+      correctionControllers = [];
       results.classList.add("hidden"); protectedResults.classList.add("hidden");
       recBtn.textContent = "Stop and decode both";
       recBtn.classList.add("recording"); dot.classList.add("live");
@@ -258,8 +263,10 @@ recBtn.addEventListener("click", async () => {
   try {
     const { samples, rate } = await stopCapture();
     if (captureProblem) throw new Error(captureProblem);
-    const params = new URLSearchParams(recordingOptions);
-    const decoded = await Promise.allSettled(samples.map(async audio => {
+    const generation = recordingGeneration;
+    const options = { ...recordingOptions };
+    const params = new URLSearchParams({ ...options, correct: "false" });
+    const decoded = await Promise.allSettled(samples.map(async (audio, i) => {
       if (!audio.length) throw new Error("No audio captured");
       const at44 = await to44k(audio, rate);
       const response = await fetch("/decode?" + params, {
@@ -267,11 +274,12 @@ recBtn.addEventListener("click", async () => {
       });
       const json = await response.json();
       if (!response.ok || !json.ok) throw new Error(json.detail || "Decode failed");
+      render(json, i === 1);
+      if (options.correct === "true" && json.n_presses) correctWithClaude(json, i === 1, generation);
       return json;
     }));
     decoded.forEach((outcome, i) => {
-      if (outcome.status === "fulfilled") render(outcome.value, i === 1);
-      else {
+      if (outcome.status !== "fulfilled") {
         (i ? protectedResults : results).classList.remove("hidden");
         $(i ? "protected_resultStatus" : "resultStatus").textContent = "Decode error: " + outcome.reason.message;
       }
@@ -280,6 +288,34 @@ recBtn.addEventListener("click", async () => {
   } catch (e) { statusEl.textContent = "Recording error: " + e.message; }
   finally { recBtn.disabled = false; }
 });
+
+async function correctWithClaude(decoded, protectedInput, generation) {
+  const find = id => $((protectedInput ? "protected_" : "") + id);
+  const controller = new AbortController();
+  correctionControllers.push(controller);
+  find("correctedPanel").classList.remove("hidden");
+  find("correctedPanel").querySelector(".label").textContent = "Claude Opus 5.5 correction";
+  find("corrected").textContent = "";
+  find("correctionStatus").textContent = "Reconstructing candidate text with Claude…";
+  try {
+    const response = await fetch("/correct", {
+      method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+      body: JSON.stringify({ provider: "claude", candidates: decoded.per_key })
+    });
+    const data = await response.json();
+    if (generation !== recordingGeneration) return;
+    if (!response.ok) throw new Error(data.detail || "Correction failed");
+    find("correctedPanel").querySelector(".label").textContent = data.provider === "claude" ? "Claude Opus 5.5 correction" : "Local n-gram correction (fallback)";
+    renderTranscript(find("corrected"), data.text);
+    const usage = data.usage ? ` · ${data.usage.input_tokens || 0} input / ${data.usage.output_tokens || 0} output tokens` : "";
+    find("correctionStatus").textContent = `${data.correction_ms} ms${usage}` + (data.fallback_reason ? ` · Claude unavailable: ${data.fallback_reason}` : "");
+  } catch(error) {
+    if (generation !== recordingGeneration || error.name === "AbortError") return;
+    find("correctionStatus").textContent = "Correction unavailable: " + error.message + ". Acoustic results remain above.";
+  } finally {
+    correctionControllers = correctionControllers.filter(c => c !== controller);
+  }
+}
 
 // ---- render ----
 function renderTranscript(el, text) {

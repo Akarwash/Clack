@@ -75,6 +75,10 @@
       const response = await fetch("/virtual-mic/status");
       if (!response.ok) throw new Error("Could not read protection status");
       state = await response.json();
+      if (state.running && document.activeElement !== $("protectionLevel")) {
+        $("protectionLevel").value = state.level;
+        $("protectionLevelValue").textContent = String(state.level);
+      }
       window.dispatchEvent(new CustomEvent("clack-protection-status", { detail: state }));
       if (state.running) $("protectionMode").value = "virtual";
       else if (state.speaker_on) $("protectionMode").value = "speaker";

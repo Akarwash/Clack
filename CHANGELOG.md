@@ -57,3 +57,14 @@ All notable changes to Clack are documented here. The format follows
 
 [Unreleased]: https://example.invalid/clack/compare/v0.1.0...HEAD
 [0.1.0]: https://example.invalid/clack/releases/tag/v0.1.0
+
+## Demo Claude correction
+
+- Added backend-only Opus 5.5 correction using probabilities and validated candidate indices.
+- Demo shows acoustic results immediately and corrects both streams independently.
+- Added explicit local fallback, correction timing/token usage, and stale-response protection.
+- Confirmed live artificial-text smoke test; labeled real-session accuracy comparison pending
+  because the only local evaluation recording has an empty events list.
+- Live Demo requests exercised refusal handling independently for both streams;
+  Correction Off hides correction panels and does not request remote correction.
+- Credentials use an ignored, private `.env` file; `.env.example` is blank.

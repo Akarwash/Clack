@@ -159,3 +159,21 @@ nearest-centroid floor model, and embedding-based cross-keyboard calibration.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+### Demo Claude correction
+
+Demo's Language correction On uses Claude Opus 5.5 (`claude-opus-5-5`) to select
+one candidate per detected character using both confidence and language context.
+Audio and acoustic inference remain local; candidate characters and probabilities
+are sent to Anthropic. Raw and protected recordings are corrected independently.
+Raw guesses and acoustic password estimates remain visible and unchanged.
+
+Configure the backend with `ANTHROPIC_API_KEY`, or a private repository-root `.env` file containing
+`ANTHROPIC_API_KEY=...` with permissions `0600`. `.env` and `.env.*` are ignored
+by Git; `.env.example` contains only a blank placeholder. The environment value
+takes precedence. Never put credentials in browser files or Git. The backend
+allows 60 seconds per request and up to 500 detected positions. Missing credentials,
+refusals, network failures, or invalid selections produce labeled local n-gram
+fallback. Language correction Off makes no remote call. Attack and offline
+evaluation still use local correction. Larger models do not guarantee improved
+recovery: score against known text before claiming accuracy gains.

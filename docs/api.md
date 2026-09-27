@@ -123,3 +123,17 @@ non-zero if any item fails. Run it before every demo.
 See [setup and protection boundaries](virtual-microphone.md). Existing
 `/defense/on` and `/defense/off` remain speaker-masking controls. Existing recorded
 defense measurements remain software-mixed evaluations, not virtual-device tests.
+
+### Demo Claude correction
+
+`POST /correct` accepts `{ "provider": "claude", "candidates": [[["a", 0.8], ["e", 0.2]]] }`.
+Each ordered position has 1–5 modeled keys with finite probabilities in [0, 1].
+Response preserves `text` and adds `provider`, `model`, `correction_ms`, `usage`
+(input/output tokens), and `fallback_reason`. Claude selects one supplied candidate
+per position. Invalid requests return 422. Empty input returns empty text without
+a network request. Remote correction is capped at 500 positions; valid longer
+input (up to 5000 positions) uses explicitly identified local fallback.
+
+Existing `{ "lattice": [["a", "e"]] }` requests remain local. Demo uploads audio
+to `/decode?correct=false` and then independently corrects each result through
+`/correct`. Attack and offline evaluation retain local correction.

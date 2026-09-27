@@ -16,3 +16,8 @@ __pycache__/
 *.pt
 *.npz
 *.wav
+
+# Local credentials
+.env
+.env.*
+!.env.example

@@ -75,7 +75,10 @@ DEMO_MIN_GAP_MS = 250           # MVP threat model: the guaranteed demo promises
 NGRAM_ORDER = 5
 BEAM_WIDTH = 8
 USE_LLM_CORRECTION = False
-LLM_MODEL = None
+LLM_MODEL = "claude-opus-5-5"
+LLM_MAX_POSITIONS = 500
+LLM_MAX_TOKENS = 8192
+LLM_TIMEOUT_S = 60
 
 # Defense
 MASKER_BAND_HZ = (1000, 10000)   # default band; D2 tunes this to the measured keyboard
