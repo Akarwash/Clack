@@ -125,6 +125,10 @@ def create_app() -> FastAPI:
         except (KeyError, RuntimeError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
+    @app.get("/trainer/level")
+    def trainer_level(session_id: str) -> dict:
+        return session.session_level(session_id)
+
     # ---- Attack (live) --------------------------------------------------------
     @app.post("/attack/start")
     async def attack_start(body: dict) -> "JSONResponse":

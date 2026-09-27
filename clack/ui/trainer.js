@@ -25,6 +25,8 @@
     startedAt: 0,
     metroTimer: null,
     clockTimer: null,
+    levelTimer: null,
+    stalled: false,
   };
 
   function $(id) { return document.getElementById(id); }
@@ -102,6 +104,36 @@
     } else {
       $("statWpm").textContent = "-";
     }
+  }
+
+  async function pollLevel() {
+    if (!state.running || !state.sessionId) { return; }
+    var bar = document.getElementById("micBar");
+    var txt = document.getElementById("micText");
+    try {
+      var r = await fetch("/trainer/level?session_id=" + encodeURIComponent(state.sessionId));
+      var d = await r.json();
+      if (!d.active) { return; }
+      var rms = d.rms || 0;
+      // dB-ish meter: map -60 dB..-10 dB to 0..100%.
+      var db = 20 * Math.log10(rms + 1e-9);
+      var pct = Math.max(0, Math.min(100, (db + 60) / 50 * 100));
+      var silent = d.silent_s == null ? 999 : d.silent_s;
+      if (silent >= 1.0) {
+        // The mic stream has stalled (no audio blocks arriving).
+        state.stalled = true;
+        bar.style.width = "100%";
+        bar.style.background = "var(--accent)";
+        txt.style.color = "var(--accent)";
+        txt.textContent = "MIC STALLED — no input for " + silent.toFixed(1) + "s. STOP and re-record.";
+      } else {
+        if (state.stalled) { state.stalled = false; }
+        bar.style.width = pct.toFixed(0) + "%";
+        bar.style.background = "var(--good)";
+        txt.style.color = "var(--muted)";
+        txt.textContent = "listening · " + (db > -60 ? db.toFixed(0) + " dB" : "quiet");
+      }
+    } catch (e) { /* transient; keep polling */ }
   }
 
   function startMetronome() {
@@ -222,6 +254,9 @@
     startMetronome();
     clearInterval(state.clockTimer);
     state.clockTimer = setInterval(render, 250);
+    clearInterval(state.levelTimer);
+    state.stalled = false;
+    state.levelTimer = setInterval(pollLevel, 300);
   }
 
   async function stop(note) {
@@ -229,6 +264,11 @@
     state.running = false;
     clearInterval(state.metroTimer);
     clearInterval(state.clockTimer);
+    clearInterval(state.levelTimer);
+    var micTxt = document.getElementById("micText");
+    var micBar = document.getElementById("micBar");
+    if (micTxt) { micTxt.textContent = "idle"; micTxt.style.color = "var(--muted)"; }
+    if (micBar) { micBar.style.width = "0%"; micBar.style.background = "var(--good)"; }
     $("startBtn").disabled = false;
     $("stopBtn").classList.add("hidden");
 

@@ -127,6 +127,14 @@
       <p class="micro" id="stageHint">Set up above, then Start. Type only the highlighted key.</p>
     </section>
 
+    <section id="micStatus" style="display:flex;align-items:center;gap:14px;margin:8px 0 20px;padding:10px 12px;border:1px solid var(--line);">
+      <span class="micro">Mic input</span>
+      <div style="flex:1;max-width:320px;height:12px;background:var(--line);position:relative;overflow:hidden;">
+        <div id="micBar" style="position:absolute;left:0;top:0;bottom:0;width:0%;background:var(--good);transition:width 80ms linear;"></div>
+      </div>
+      <span class="mono" id="micText" style="font-size:13px;color:var(--muted);">idle</span>
+    </section>
+
     <section class="readout" id="readout">
       <div class="stat"><span class="micro">Keys captured</span><span class="n" id="statKeys">0</span></div>
       <div class="stat"><span class="micro">Coverage</span><span class="n" id="statCov">0/37</span></div>

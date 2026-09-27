@@ -218,6 +218,30 @@ def active_sessions() -> list[str]:
     return sorted(_ACTIVE)
 
 
+def session_level(session_id: str) -> dict:
+    """Return the live mic health for an active session (for the UI meter).
+
+    Parameters
+    ----------
+    session_id : str
+        An active session id.
+
+    Returns
+    -------
+    dict
+        ``{active, rms, silent_s, alive}``. ``active`` is ``False`` when the
+        session is unknown; ``alive`` is ``False`` and ``silent_s`` large when the
+        mic stream has stalled (no audio arriving).
+    """
+    state = _ACTIVE.get(session_id)
+    if state is None:
+        return {"active": False}
+    recorder = state["recorder"]
+    status = recorder.level_status() if hasattr(recorder, "level_status") else {"rms": 0.0, "silent_s": None, "alive": False}
+    status["active"] = True
+    return status
+
+
 def event_to_sample_index(event_t_perf: float, meta: dict) -> int:
     """Map a key event's perf-counter time to an approximate audio sample index.
 

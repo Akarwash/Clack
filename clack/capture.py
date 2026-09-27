@@ -120,6 +120,9 @@ class Recorder:
         self.input_latency_s: float = 0.0
         self.stream_time_origin: Optional[float] = None
         self._first_callback = True
+        # Live health tracking so the UI can show a level meter and detect a stall.
+        self.last_level: float = 0.0
+        self.last_callback_perf: Optional[float] = None
 
     def _callback(self, indata, frames, time_info, status) -> None:  # pragma: no cover - realtime
         """PortAudio callback: record timing on the first frame, then buffer."""
@@ -129,7 +132,25 @@ class Recorder:
             if self._stream is not None:
                 self.input_latency_s = float(getattr(self._stream, "latency", 0.0) or 0.0)
             self._first_callback = False
+        self.last_callback_perf = time.perf_counter()
+        mono = indata[:, 0] if indata.ndim > 1 else indata
+        self.last_level = float(np.sqrt(np.mean(np.square(mono.astype(np.float64)))) if mono.size else 0.0)
         self._queue.put(indata.copy())
+
+    def level_status(self) -> dict:
+        """Return live capture health for the UI.
+
+        Returns
+        -------
+        dict
+            ``{rms, peak_hint, silent_s, alive}`` where ``silent_s`` is the time
+            since the last audio block arrived (``None`` if none yet) and ``alive``
+            is ``True`` when audio arrived recently (within ~1s).
+        """
+        now = time.perf_counter()
+        silent_s = None if self.last_callback_perf is None else (now - self.last_callback_perf)
+        alive = silent_s is not None and silent_s < 1.0
+        return {"rms": self.last_level, "silent_s": silent_s, "alive": alive}
 
     def _open_stream(self) -> None:  # pragma: no cover - requires a real device
         import sounddevice as sd

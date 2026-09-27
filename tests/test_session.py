@@ -156,6 +156,21 @@ def test_unknown_session_stop_raises() -> None:
         session.stop_session("does-not-exist")
 
 
+def test_session_level_reports_health(tmp_path, synthetic_audio) -> None:
+    """session_level reports active state, and False for an unknown session."""
+    assert session.session_level("nope") == {"active": False}
+    audio, onsets = synthetic_audio(n_clicks=3)
+    rec = _FakeRecorder(audio, 1000.0)
+    rec.level_status = lambda: {"rms": 0.01, "silent_s": 0.05, "alive": True}
+    sid = session.start_session(
+        keyboard_id="blue", typist="t", purpose="train",
+        recorder=rec, keylogger=_FakeKeyLogger([]), root=str(tmp_path),
+    )
+    lvl = session.session_level(sid)
+    assert lvl["active"] is True and lvl["alive"] is True
+    session.stop_session(sid)
+
+
 def test_truncated_audio_warns(tmp_path) -> None:
     """A recording far shorter than the keypress span is flagged as truncated."""
     sr = config.SAMPLE_RATE
