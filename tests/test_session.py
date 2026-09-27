@@ -156,6 +156,31 @@ def test_unknown_session_stop_raises() -> None:
         session.stop_session("does-not-exist")
 
 
+def test_truncated_audio_warns(tmp_path) -> None:
+    """A recording far shorter than the keypress span is flagged as truncated."""
+    sr = config.SAMPLE_RATE
+    audio_start = 1000.0
+    short_audio = np.ones(sr // 2, dtype=np.float32)  # 0.5s of audio
+    # Keypresses span ~20s (audio should be ~20s but is only 0.5s).
+    events = [
+        {"key": "a", "t_perf": audio_start + 0.1, "type": "press"},
+        {"key": "b", "t_perf": audio_start + 10.0, "type": "press"},
+        {"key": "c", "t_perf": audio_start + 20.0, "type": "press"},
+    ]
+    sid = session.start_session(
+        keyboard_id="blue",
+        typist="synthetic",
+        purpose="eval",
+        recorder=_FakeRecorder(short_audio, audio_start),
+        keylogger=_FakeKeyLogger(events),
+        root=str(tmp_path),
+    )
+    summary = session.stop_session(sid)
+    assert "warning" in summary
+    assert "TRUNCATED" in summary["warning"]
+    assert summary["expected_duration_s"] > 15
+
+
 def test_drops_keys_outside_key_set(tmp_path, synthetic_audio) -> None:
     """Events for keys outside KEY_SET are dropped at write time."""
     audio, onsets = synthetic_audio(n_clicks=3, gap_ms=550)

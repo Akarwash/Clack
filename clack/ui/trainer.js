@@ -241,10 +241,12 @@
       });
       var data = await r.json();
       summary =
+        (data.warning ? "⚠ " + data.warning + "\n\n" : "") +
         (note ? note + "\n" : "") +
         "saved " + data.n_events + " events, " +
-        (Math.round((data.duration_s || 0) * 10) / 10) + "s\n" +
-        "path: " + data.path;
+        (Math.round((data.duration_s || 0) * 10) / 10) + "s audio" +
+        (data.expected_duration_s ? " (keypresses span " + Math.round(data.expected_duration_s) + "s)" : "") +
+        "\npath: " + data.path;
     } catch (e) {
       summary = "Stop failed: " + e.message;
     }

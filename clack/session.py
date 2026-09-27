@@ -15,6 +15,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
+import sys as _sys
 from typing import Optional
 
 import numpy as np
@@ -179,12 +180,31 @@ def stop_session(session_id: str) -> dict:
         json.dump(meta, fh, indent=2)
 
     duration_s = len(audio) / float(sample_rate)
-    return {
+
+    # Truncation guard: the audio stream can stall mid-session (a USB glitch)
+    # while key logging keeps running, leaving audio far shorter than the span of
+    # keypresses. Detect that loudly so the session is re-recorded, rather than
+    # silently saving a recording most keystrokes have no sound in.
+    summary = {
         "session_id": session_id,
         "n_events": len(kept),
         "duration_s": duration_s,
         "path": session_dir,
     }
+    audio_start = float(getattr(recorder, "audio_start_perf", 0.0) or 0.0)
+    if kept and audio_start:
+        expected_s = float(kept[-1]["t_perf"]) - audio_start
+        summary["expected_duration_s"] = expected_s
+        if expected_s > 5.0 and duration_s < 0.8 * expected_s:
+            warning = (
+                f"AUDIO TRUNCATED: captured {duration_s:.1f}s of audio but keypresses "
+                f"span {expected_s:.1f}s. The microphone stream stalled mid-session "
+                f"(about {100 * duration_s / expected_s:.0f}% captured). Re-record this "
+                "session; check the mic cable/connection."
+            )
+            summary["warning"] = warning
+            print(warning, file=_sys.stderr)
+    return summary
 
 
 def active_sessions() -> list[str]:
