@@ -1,0 +1,26 @@
+{
+  "model": "dak-cold",
+  "model_dir": "data/models/dak-cold",
+  "model_is_trainfit_headline": true,
+  "session_id": "2026-09-26T20-54-04_dak-keyboard_aditya_eval",
+  "typist": "aditya",
+  "keyboard_id": "dak keyboard",
+  "held_out_kind": "TRUE cross-typist held-out (trained on josh+vishal; never heard aditya)",
+  "tol_ms": 100.0,
+  "n_true_presses": 383,
+  "n_detected_presses": 427,
+  "onset_recall": 0.9947780678851175,
+  "onset_precision": 0.892271662763466,
+  "top1": 0.391644908616188,
+  "top3": 0.6892950391644909,
+  "top5": 0.8015665796344648,
+  "cer_raw": 0.608355091383812,
+  "decode_latency_ms": {
+    "median": 1.7990842461585999,
+    "p90": 2.2882174700498585,
+    "n": 427
+  },
+  "corrected": null,
+  "generated": "2026-09-27T06:55:00",
+  "note": "End-to-end attack recovery on held-out audio (onset detect + classify + onset-aligned scoring). Raw model output, no language-model correction. Onset recall is the fraction of true presses matched by a detected onset within +/-100 ms."
+}
