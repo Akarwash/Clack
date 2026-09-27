@@ -68,3 +68,10 @@ All notable changes to Clack are documented here. The format follows
 - Live Demo requests exercised refusal handling independently for both streams;
   Correction Off hides correction panels and does not request remote correction.
 - Credentials use an ignored, private `.env` file; `.env.example` is blank.
+
+## Correction prompt framing
+
+- Framed candidate selection as a constraint-satisfaction logic puzzle, preserving
+  one allowed candidate per ordered position.
+- The repeated noisy-candidate smoke test still returned a provider refusal;
+  local fallback remains explicitly labeled.
