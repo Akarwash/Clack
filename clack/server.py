@@ -11,11 +11,12 @@ Owner: BUILD_BACKEND.
 from __future__ import annotations
 
 import asyncio
+import io
 import os
 import time
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -40,6 +41,51 @@ def _find_default_model() -> Optional[str]:
         return None
     non_floor = [c for c in candidates if not c.endswith("-centroid")]
     return (non_floor or candidates)[0]
+
+
+def _list_models() -> list[dict]:
+    """List saved models under MODELS_DIR with their stored metrics (for the demo).
+
+    CNN models sort before centroid floors. Each entry carries the held-out
+    accuracy recorded at train time when available, so the demo dropdown can show
+    what each model is.
+    """
+    import json
+
+    root = config.MODELS_DIR
+    out: list[dict] = []
+    if not os.path.isdir(root):
+        return out
+    for name in sorted(os.listdir(root)):
+        cfg = os.path.join(root, name, "config.json")
+        if not os.path.isfile(cfg):
+            continue
+        entry: dict = {"name": name, "type": "centroid" if name.endswith("-centroid") else "cnn"}
+        metrics_path = os.path.join(root, name, "metrics.json")
+        if os.path.isfile(metrics_path):
+            try:
+                with open(metrics_path, encoding="utf-8") as fh:
+                    m = json.load(fh)
+                entry["metrics"] = {
+                    k: m[k]
+                    for k in ("val_accuracy", "val_top3_accuracy", "val_is_trainfit", "note")
+                    if k in m
+                }
+            except (OSError, ValueError):
+                pass
+        out.append(entry)
+    out.sort(key=lambda e: (e["type"] != "cnn", e["name"]))
+    return out
+
+
+def _load_cached_model(app: FastAPI, model_dir: str) -> object:
+    """Load a model once and cache it on app.state.models (keyed by directory)."""
+    from clack import model as _model
+
+    cache = app.state.models
+    if model_dir not in cache:
+        cache[model_dir] = _model.load_model(model_dir)
+    return cache[model_dir]
 
 
 def _synthetic_frames() -> list[dict]:
@@ -82,6 +128,7 @@ def create_app() -> FastAPI:
     app.state.last_exposure = None
     app.state.last_defense = None
     app.state.corrector = None
+    app.state.models = {}
 
     # ---- Pages ----------------------------------------------------------------
     @app.get("/")
@@ -91,6 +138,10 @@ def create_app() -> FastAPI:
     @app.get("/trainer")
     def trainer_page() -> "FileResponse":
         return FileResponse(os.path.join(_UI_DIR, "trainer.html"))
+
+    @app.get("/demo")
+    def demo_page() -> "FileResponse":
+        return FileResponse(os.path.join(_UI_DIR, "demo.html"))
 
     # ---- Trainer / collection -------------------------------------------------
     @app.get("/devices")
@@ -286,6 +337,79 @@ def create_app() -> FastAPI:
 
             app.state.corrector = NgramCorrector()
         return {"text": app.state.corrector.correct(lattice)}
+
+    # ---- Demo: model list + record-then-decode --------------------------------
+    @app.get("/models")
+    def models_route() -> "JSONResponse":
+        return JSONResponse({"models": _list_models(), "default": os.path.basename(_find_default_model() or "")})
+
+    @app.post("/decode")
+    async def decode_route(request: "Request", model: str = "", correct: bool = True, top_n: int = 3) -> "JSONResponse":
+        """Decode one uploaded audio clip: onsets -> CNN top-k -> optional LM fix.
+
+        The body is raw WAV bytes (the demo captures mic PCM and encodes a
+        44.1kHz mono WAV client-side). Returns the top-1 transcript, the per-key
+        candidate lattice, the language-model-corrected text, and the password
+        search-space reduction (the honest "how crackable" number).
+        """
+        import soundfile as sf
+
+        from clack import attack as _attack
+
+        body = await request.body()
+        if not body:
+            return JSONResponse({"ok": False, "detail": "empty audio upload"}, status_code=400)
+        try:
+            audio, sr = sf.read(io.BytesIO(body), dtype="float32", always_2d=False)
+        except Exception as exc:  # noqa: BLE001 - report any decode failure to the UI
+            return JSONResponse({"ok": False, "detail": f"could not read audio: {exc}"}, status_code=400)
+        if getattr(audio, "ndim", 1) > 1:
+            audio = audio.mean(axis=1).astype("float32")
+
+        model_dir = os.path.join(config.MODELS_DIR, model) if model else _find_default_model()
+        if not model_dir or not os.path.isdir(model_dir):
+            return JSONResponse({"ok": False, "detail": f"no such model: {model!r}"}, status_code=400)
+
+        try:
+            loaded = _load_cached_model(app, model_dir)
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse({"ok": False, "detail": f"could not load model: {exc}"}, status_code=500)
+
+        t0 = time.perf_counter()
+        try:
+            result = _attack.attack_audio(audio, int(sr), loaded, k=5)
+        except ValueError as exc:
+            # No onsets is a normal "nothing heard" case; report it kindly.
+            return JSONResponse({"ok": True, "n_presses": 0, "transcript": "", "corrected": None,
+                                 "per_key": [], "detail": str(exc), "model": os.path.basename(model_dir),
+                                 "duration_s": round(len(audio) / sr, 2)})
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+        lattice = [[key for key, _ in pk["topk"]] for pk in result.per_key]
+        corrected = None
+        if correct:
+            if app.state.corrector is None:
+                from clack.correct import NgramCorrector
+
+                app.state.corrector = NgramCorrector()
+            corrected = app.state.corrector.correct(lattice)
+
+        top_n = max(1, min(int(top_n), 5))
+        space_reduced = _attack.password_search_space(result.topk, top_n=top_n)
+        space_full = len(result.classes) ** max(1, int(result.topk.shape[0]))
+        return JSONResponse({
+            "ok": True,
+            "model": os.path.basename(model_dir),
+            "n_presses": int(result.topk.shape[0]),
+            "transcript": result.text,
+            "corrected": corrected,
+            "per_key": [pk["topk"] for pk in result.per_key],
+            "top_n": top_n,
+            "search_space_reduced": str(space_reduced),
+            "search_space_full": str(space_full),
+            "duration_s": round(len(audio) / sr, 2),
+            "latency_ms": round(elapsed_ms, 1),
+        })
 
     # ---- Status / preflight ---------------------------------------------------
     @app.get("/status")

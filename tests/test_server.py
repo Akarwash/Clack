@@ -103,3 +103,72 @@ def test_defense_measure_not_yet(client) -> None:
     r = client.get("/defense/measure")
     assert r.status_code == 404
     assert r.json()["ok"] is False
+
+
+def test_demo_page_serves(client) -> None:
+    """The demo page returns 200."""
+    assert client.get("/demo").status_code == 200
+
+
+def test_models_route_shape(client) -> None:
+    """/models returns a models list and a default field."""
+    r = client.get("/models")
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body["models"], list)
+    assert "default" in body
+
+
+def test_decode_empty_body(client) -> None:
+    """/decode rejects an empty upload rather than guessing."""
+    r = client.post("/decode", content=b"", headers={"Content-Type": "application/octet-stream"})
+    assert r.status_code == 400
+    assert r.json()["ok"] is False
+
+
+def test_decode_bad_audio(client) -> None:
+    """/decode reports an unreadable audio upload loudly."""
+    r = client.post("/decode?model=dak", content=b"not a wav", headers={"Content-Type": "application/octet-stream"})
+    assert r.status_code == 400
+    assert "could not read audio" in r.json()["detail"]
+
+
+def test_decode_happy_path(client, monkeypatch, tmp_path) -> None:
+    """/decode round-trips onsets -> top-k -> transcript with the model stubbed."""
+    import io
+
+    import numpy as np
+    import soundfile as sf
+
+    from clack import attack as _attack
+
+    (tmp_path / "m1").mkdir()
+    monkeypatch.setattr(server.config, "MODELS_DIR", str(tmp_path))
+    monkeypatch.setattr(server, "_load_cached_model", lambda app, d: object())
+
+    class _R:
+        text = "ab"
+        classes = ["a", "b", "space"]
+        topk = np.array([[0, 1], [1, 0]])
+        per_key = [
+            {"topk": [("a", 0.9), ("b", 0.1)]},
+            {"topk": [("b", 0.8), ("a", 0.2)]},
+        ]
+
+    monkeypatch.setattr(_attack, "attack_audio", lambda *a, **k: _R())
+
+    buf = io.BytesIO()
+    sf.write(buf, np.zeros(1000, dtype="float32"), 44100, format="WAV", subtype="PCM_16")
+    r = client.post(
+        "/decode?model=m1&correct=false&top_n=3",
+        content=buf.getvalue(),
+        headers={"Content-Type": "application/octet-stream"},
+    )
+    assert r.status_code == 200
+    j = r.json()
+    assert j["ok"] is True
+    assert j["n_presses"] == 2
+    assert j["transcript"] == "ab"
+    assert j["corrected"] is None
+    assert j["per_key"][0][0][0] == "a"
+    assert j["search_space_full"] == "9"
