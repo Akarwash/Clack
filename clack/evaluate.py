@@ -236,7 +236,7 @@ def evaluate_attack(
     model: object,
     session: str,
     correct_fn: Optional[Callable[[list[list[str]]], str]] = None,
-    tol_ms: float = 30.0,
+    tol_ms: Optional[float] = None,
 ) -> dict:
     """Run the full attack on a held-out recording and return every metric.
 
@@ -253,8 +253,12 @@ def evaluate_attack(
     correct_fn : callable or None, optional
         ``lattice -> corrected_str``; if given, corrected CER and accuracy are
         also returned so raw vs corrected is one call.
-    tol_ms : float, optional
-        Onset match tolerance in milliseconds.
+    tol_ms : float or None, optional
+        Onset match tolerance in milliseconds. Defaults to
+        ``config.ONSET_SEARCH_MS`` (100ms), matching the documented precision of
+        the coarse event-to-audio clock map (the raw map can sit tens of ms off;
+        training absorbs this with the +/- ONSET_SEARCH_MS onset snap, so scoring
+        against the coarse-mapped ground truth uses the same window).
 
     Returns
     -------
@@ -264,6 +268,8 @@ def evaluate_attack(
     """
     from clack import attack as _attack
 
+    if tol_ms is None:
+        tol_ms = float(config.ONSET_SEARCH_MS)
     audio, sr, meta = _load_session(session)
     true_samples, true_keys = _true_samples_and_keys(meta, sr)
     result = _attack.attack_audio(audio, sr, model, k=max(config.EVAL_TOPK))
