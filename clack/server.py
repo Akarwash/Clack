@@ -297,6 +297,38 @@ def create_app() -> FastAPI:
             return JSONResponse({"ok": False, "detail": "no measurement yet; run a before/after measurement"}, status_code=404)
         return JSONResponse(app.state.last_defense)
 
+    @app.post("/defense/measure")
+    async def defense_measure_run(body: dict) -> "JSONResponse":
+        """Run the before/after defense measurement on a recorded session.
+
+        Simulates the masked capture (no live speaker needed) and returns the
+        onset-aligned recovery with the masker off vs on: the core Cyber result.
+        """
+        session_id = body.get("session_id")
+        if not session_id:
+            return JSONResponse({"ok": False, "detail": "session_id required"}, status_code=400)
+        session_dir = os.path.join(config.RECORDINGS_DIR, session_id)
+        model_dir = os.path.join(config.MODELS_DIR, body["model_name"]) if body.get("model_name") else _find_default_model()
+        if not model_dir or not os.path.isdir(model_dir):
+            return JSONResponse({"ok": False, "detail": "no trained model available"}, status_code=400)
+        try:
+            from clack import defense as _defense
+
+            loaded = _load_cached_model(app, model_dir)
+            band = body.get("band")
+            result = _defense.measure_session(
+                loaded,
+                session_dir,
+                level=body.get("level"),
+                band_hz=(int(band[0]), int(band[1])) if band else None,
+            )
+            result["ok"] = True
+            result["model"] = os.path.basename(model_dir)
+            app.state.last_defense = result
+            return JSONResponse(result)
+        except (FileNotFoundError, ValueError) as exc:
+            return JSONResponse({"ok": False, "detail": str(exc)}, status_code=400)
+
     # ---- Exposure and fleet ---------------------------------------------------
     @app.post("/exposure/check")
     async def exposure_check(body: dict) -> "JSONResponse":

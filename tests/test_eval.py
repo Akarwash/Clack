@@ -122,3 +122,31 @@ def test_format_report_reports_not_measured() -> None:
     report = evaluate.format_report(metrics)
     assert "not measured" in report
     assert "onset recall" in report
+
+
+class _FakeResult:
+    """A minimal AttackResult stand-in for align_to_true (onsets + per_key)."""
+
+    def __init__(self, onsets, per_key) -> None:
+        self.onsets = np.asarray(onsets)
+        self.per_key = per_key
+
+
+def test_align_to_true_ignores_spurious_and_flags_misses() -> None:
+    """Alignment matches each true key to its nearest onset, not by position.
+
+    Regression for the defense measurement bug: a spurious leading onset used to
+    shift positional scoring and collapse recovery. Alignment must ignore the
+    spurious onset, recover the real keys, and mark an unmatched true key a miss.
+    """
+    sr = 1000  # 30 ms tolerance = 30 samples
+    res = _FakeResult(
+        onsets=[50, 105, 210],  # 50 is spurious; 105~100, 210~200; nothing near 300
+        per_key=[
+            {"topk": [("x", 0.9)]},  # spurious
+            {"topk": [("a", 0.9)]},  # -> true 100
+            {"topk": [("b", 0.9)]},  # -> true 200
+        ],
+    )
+    aligned = evaluate.align_to_true(res, [100, 200, 300], sr, tol_ms=30.0)
+    assert aligned == [["a"], ["b"], []]

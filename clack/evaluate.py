@@ -232,6 +232,29 @@ def _true_samples_and_keys(meta: dict, sr: int) -> tuple[list[int], list[str]]:
     return samples, keys
 
 
+def align_to_true(result: object, true_samples: list[int], sr: int, tol_ms: float) -> list[list[str]]:
+    """Align detected presses to true events by nearest onset within tolerance.
+
+    Returns one ranked candidate list per true key (empty for an onset miss).
+    Acoustic onset detection can over- or under-count presses, so scoring
+    position-by-position against the true sequence is wrong once a spurious or
+    missed onset shifts the alignment; matching each true event to its nearest
+    detected onset is how recovery stays meaningful. Shared by the attack and
+    defense evaluations so both report the same kind of number.
+    """
+    detected = list(result.onsets.tolist())
+    tol = sr * tol_ms / 1000.0
+    aligned: list[list[str]] = []
+    for t in true_samples:
+        best_j, best_d = -1, tol
+        for j, d in enumerate(detected):
+            dist = abs(d - t)
+            if dist <= best_d:
+                best_d, best_j = dist, j
+        aligned.append([kk for kk, _ in result.per_key[best_j]["topk"]] if best_j >= 0 else [])
+    return aligned
+
+
 def evaluate_attack(
     model: object,
     session: str,
@@ -276,21 +299,7 @@ def evaluate_attack(
 
     onset = onset_metrics(result.onsets.tolist(), true_samples, sr, tol_ms=tol_ms)
 
-    # Align detected presses to true events (nearest onset within tolerance).
-    detected = list(result.onsets.tolist())
-    tol = sr * tol_ms / 1000.0
-    aligned_pred: list[list[str]] = []
-    for t in true_samples:
-        best_j, best_d = -1, tol
-        for j, d in enumerate(detected):
-            dist = abs(d - t)
-            if dist <= best_d:
-                best_d, best_j = dist, j
-        if best_j >= 0:
-            aligned_pred.append([kk for kk, _ in result.per_key[best_j]["topk"]])
-        else:
-            aligned_pred.append([])  # onset miss counts as an error
-
+    aligned_pred = align_to_true(result, true_samples, sr, tol_ms)
     chars = char_metrics(aligned_pred, true_keys)
     out = {
         "session_id": meta.get("session_id", os.path.basename(session)),
@@ -320,6 +329,8 @@ def evaluate_defense(
     masked_audio: np.ndarray,
     sr: int,
     true_keys: Optional[list[str]] = None,
+    true_samples: Optional[list[int]] = None,
+    tol_ms: Optional[float] = None,
 ) -> dict:
     """Before/after recovery for the defense (the main Cyber result).
 
@@ -339,6 +350,13 @@ def evaluate_defense(
     true_keys : list of str or None, optional
         Ground-truth keys; if given, ``off``/``on`` are top-1 accuracy and CER is
         included, else recovery is the detected-press count ratio.
+    true_samples : list of int or None, optional
+        Ground-truth onset sample positions. Strongly recommended whenever
+        ``true_keys`` is given: predictions are then aligned to true events by
+        nearest onset (like :func:`evaluate_attack`), which is the only correct
+        way to score recovery when acoustic onset detection over- or under-counts
+        presses. Without it the scoring falls back to fragile positional
+        comparison (kept only for callers that lack timing).
 
     Returns
     -------
@@ -347,16 +365,24 @@ def evaluate_defense(
     """
     from clack import attack as _attack
 
+    if tol_ms is None:
+        tol_ms = float(config.ONSET_SEARCH_MS)
+
     def _recover(audio: np.ndarray) -> dict:
         try:
             res = _attack.attack_audio(audio, sr, model, k=max(config.EVAL_TOPK))
         except ValueError:
             return {"top1": 0.0, "cer": 1.0, "n_presses": 0, "pred": []}
-        pred = [[kk for kk, _ in pk["topk"]] for pk in res.per_key]
+        n_presses = len(res.per_key)
         if true_keys is not None:
+            if true_samples is not None:
+                pred = align_to_true(res, true_samples, sr, tol_ms)
+            else:
+                pred = [[kk for kk, _ in pk["topk"]] for pk in res.per_key]
             cm = char_metrics(pred, true_keys)
-            return {"top1": cm["top1"], "cer": cm["cer"], "n_presses": len(pred), "pred": pred}
-        return {"top1": None, "cer": None, "n_presses": len(pred), "pred": pred}
+            return {"top1": cm["top1"], "cer": cm["cer"], "n_presses": n_presses, "pred": pred}
+        pred = [[kk for kk, _ in pk["topk"]] for pk in res.per_key]
+        return {"top1": None, "cer": None, "n_presses": n_presses, "pred": pred}
 
     off = _recover(clean_audio)
     on = _recover(masked_audio)

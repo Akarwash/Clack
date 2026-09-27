@@ -271,6 +271,7 @@ def measure(
     sample_rate: Optional[int] = None,
     level: Optional[float] = None,
     band_hz: Optional[tuple[int, int]] = None,
+    true_samples: Optional[list[int]] = None,
 ) -> dict:
     """The honest before/after: recovery with the masker off vs on, same text.
 
@@ -292,6 +293,9 @@ def measure(
         Masker level; defaults to ``config.MASKER_LEVEL``.
     band_hz : tuple of int or None, optional
         Masker band; defaults to ``config.MASKER_BAND_HZ``.
+    true_samples : list of int or None, optional
+        Ground-truth onset sample positions; passed through so recovery is scored
+        with onset alignment (see :func:`clack.evaluate.evaluate_defense`).
 
     Returns
     -------
@@ -303,8 +307,76 @@ def measure(
     sr = int(sample_rate or config.SAMPLE_RATE)
     masker = generate_masker(len(clean_audio) / sr, sr, band_hz=band_hz, level=level)
     masked = apply_masker(clean_audio, masker)
-    result = _evaluate.evaluate_defense(model, clean_audio, masked, sr, true_keys=true_keys)
+    result = _evaluate.evaluate_defense(
+        model, clean_audio, masked, sr, true_keys=true_keys, true_samples=true_samples
+    )
     result["level"] = config.MASKER_LEVEL if level is None else float(level)
+    return result
+
+
+def measure_session(
+    model: object,
+    session_dir: str,
+    level: Optional[float] = None,
+    band_hz: Optional[tuple[int, int]] = None,
+    auto_band: bool = True,
+) -> dict:
+    """Before/after defense measurement for a recorded session (backend entry).
+
+    Reads the session's audio and ground-truth events, generates the masker
+    (auto-tuned to the keyboard band by default), simulates the masked capture,
+    and returns the onset-aligned recovery off vs on. This is the software path
+    used by the ``/defense/measure`` endpoint so the defense result is
+    reproducible without a live speaker-and-mic loop.
+
+    Parameters
+    ----------
+    model : object
+        A fitted attack model.
+    session_dir : str
+        A ``data/recordings/<id>/`` directory with ``audio.wav`` and
+        ``events.json``.
+    level : float or None, optional
+        Masker level; defaults to ``config.MASKER_LEVEL``.
+    band_hz : tuple of int or None, optional
+        Masker band; overrides ``auto_band`` when given.
+    auto_band : bool, optional
+        Tune the masker band to the recording's measured keystroke band
+        (default ``True``).
+
+    Returns
+    -------
+    dict
+        The :func:`measure` result plus ``band`` and ``n_keys``.
+    """
+    import json
+    import os
+
+    import soundfile as sf
+
+    from clack import evaluate as _evaluate
+
+    wav = os.path.join(session_dir, "audio.wav")
+    events = os.path.join(session_dir, "events.json")
+    if not os.path.isfile(wav) or not os.path.isfile(events):
+        raise FileNotFoundError(f"session missing audio.wav or events.json: {session_dir}")
+    audio, sr = sf.read(wav, dtype="float32", always_2d=False)
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1).astype(np.float32)
+    with open(events, encoding="utf-8") as fh:
+        meta = json.load(fh)
+    true_samples, true_keys = _evaluate._true_samples_and_keys(meta, int(sr))
+
+    band = band_hz
+    if band is None and auto_band:
+        band = measure_keyboard_band(audio[: int(sr) * 5], int(sr))
+
+    result = measure(
+        model, audio, true_keys, sample_rate=int(sr), level=level,
+        band_hz=band, true_samples=true_samples,
+    )
+    result["band"] = list(band) if band else list(config.MASKER_BAND_HZ)
+    result["n_keys"] = len(true_keys)
     return result
 
 

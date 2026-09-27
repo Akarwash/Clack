@@ -172,3 +172,34 @@ def test_decode_happy_path(client, monkeypatch, tmp_path) -> None:
     assert j["corrected"] is None
     assert j["per_key"][0][0][0] == "a"
     assert j["search_space_full"] == "9"
+
+
+def test_defense_measure_run_and_read(client, monkeypatch, tmp_path) -> None:
+    """POST /defense/measure runs the before/after and GET reads it back."""
+    from clack import defense as _defense
+
+    (tmp_path / "m1").mkdir()
+    monkeypatch.setattr(server.config, "MODELS_DIR", str(tmp_path))
+    monkeypatch.setattr(server, "_load_cached_model", lambda app, d: object())
+    canned = {
+        "off": 0.78, "on": 0.03, "delta": 0.75,
+        "masker_key_ratio_db": 21.0, "band": [884, 2865], "n_keys": 383, "level": 0.3,
+    }
+    monkeypatch.setattr(_defense, "measure_session", lambda *a, **k: dict(canned))
+
+    r = client.post("/defense/measure", json={"session_id": "sX", "model_name": "m1", "level": 0.3})
+    assert r.status_code == 200
+    j = r.json()
+    assert j["ok"] is True
+    assert j["off"] == 0.78 and j["on"] == 0.03 and j["delta"] == 0.75
+
+    g = client.get("/defense/measure")
+    assert g.status_code == 200
+    assert g.json()["delta"] == 0.75
+
+
+def test_defense_measure_run_requires_session(client) -> None:
+    """POST /defense/measure without a session_id fails loudly."""
+    r = client.post("/defense/measure", json={"model_name": "dak"})
+    assert r.status_code == 400
+    assert r.json()["ok"] is False
