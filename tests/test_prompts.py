@@ -60,6 +60,31 @@ def test_balanced_sequence_rejects_bad_input() -> None:
         prompts.balanced_sequence(length=0)
 
 
+def test_sequence_prompt_even_coverage() -> None:
+    """A whole number of passes covers every key equally."""
+    order = prompts.DEFAULT_SEQUENCE_ORDER
+    seq = prompts.sequence_prompt(length=len(order) * 5)
+    counts = prompts.coverage_counts(seq)
+    present = [c for c in counts.values() if c > 0]
+    assert min(present) == max(present) == 5  # exactly 5 passes -> 5 per key
+    assert all(t in config.KEY_SET for t in seq)
+
+
+def test_sequence_prompt_is_fixed_order() -> None:
+    """The sequence repeats the fixed order (not random)."""
+    order = prompts.DEFAULT_SEQUENCE_ORDER
+    seq = prompts.sequence_prompt(length=len(order) * 2)
+    assert seq[: len(order)] == list(order)
+    assert seq[len(order) : 2 * len(order)] == list(order)
+
+
+def test_sequence_prompt_rejects_bad_input() -> None:
+    with pytest.raises(ValueError):
+        prompts.sequence_prompt(length=0)
+    with pytest.raises(ValueError):
+        prompts.sequence_prompt(order=[])
+
+
 def test_next_needed_keys_orders_by_deficit() -> None:
     """Keys below quota are returned most-deficient first; met keys are omitted."""
     counts = {"a": 40, "b": 10, "c": 25, "d": 0}

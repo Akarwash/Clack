@@ -75,6 +75,53 @@ def balanced_sequence(
     return out[:length]
 
 
+DEFAULT_SEQUENCE_ORDER = list("qwertyuiopasdfghjklzxcvbnm1234567890") + ["space"]
+
+
+def sequence_prompt(
+    length: Optional[int] = None,
+    order: Optional[Sequence[str]] = None,
+) -> list[str]:
+    """Generate a fixed keyboard-order sequence, repeated, for fast collection.
+
+    Instead of reacting to random characters, the typist recites a memorized fixed
+    order (default keyboard rows plus digits and space) repeatedly. Each full pass
+    covers every key once, so ``TRAIN_SAMPLES_PER_KEY`` passes yield that many real
+    presses per key, collected faster. The training pipeline shuffles windows, so
+    the resulting dataset is equivalent to random-order collection; keeping presses
+    isolated (the overlap flag) means the fixed order introduces no bias.
+
+    Parameters
+    ----------
+    length : int or None, optional
+        Number of tokens; defaults to ``TRAIN_SAMPLES_PER_KEY * len(order)`` (one
+        full quota of passes).
+    order : sequence of str or None, optional
+        The fixed key order per pass; defaults to :data:`DEFAULT_SEQUENCE_ORDER`.
+
+    Returns
+    -------
+    list of str
+        The fixed order repeated and trimmed to ``length``.
+
+    Raises
+    ------
+    ValueError
+        If ``order`` is empty or ``length`` is not positive.
+    """
+    seq = list(DEFAULT_SEQUENCE_ORDER if order is None else order)
+    if not seq:
+        raise ValueError("order must be non-empty")
+    if length is None:
+        length = config.TRAIN_SAMPLES_PER_KEY * len(seq)
+    if length <= 0:
+        raise ValueError(f"length must be positive, got {length}")
+    out: list[str] = []
+    while len(out) < length:
+        out.extend(seq)
+    return out[:length]
+
+
 def coverage_counts(tokens: Sequence[str], key_set: Optional[Sequence[str]] = None) -> dict[str, int]:
     """Count how many times each key appears in a token sequence.
 

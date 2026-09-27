@@ -99,7 +99,7 @@
     $("statKeys").textContent = state.captured;
     var elapsed = state.running ? (Date.now() - state.startedAt) / 1000 : 0;
     $("statElapsed").textContent = Math.round(elapsed) + "s";
-    if (state.mode === "flow" && elapsed > 0) {
+    if (state.mode !== "paced" && elapsed > 0) {
       $("statWpm").textContent = Math.round((state.captured / 5) / (elapsed / 60));
     } else {
       $("statWpm").textContent = "-";

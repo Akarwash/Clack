@@ -102,7 +102,10 @@ def create_app() -> FastAPI:
 
     @app.get("/trainer/prompt")
     def trainer_prompt(n: int = 200, mode: str = "paced") -> dict:
-        chars = prompts.balanced_sequence(length=max(1, int(n)))
+        if mode == "sequence":
+            chars = prompts.sequence_prompt(length=max(1, int(n)))
+        else:
+            chars = prompts.balanced_sequence(length=max(1, int(n)))
         return {"chars": chars, "mode": mode}
 
     @app.post("/trainer/start")
