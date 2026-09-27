@@ -30,7 +30,8 @@
     waveHead: 0,
     spec: [],         // array of columns, each Float32Array
     specMax: 90,
-    conf3: [],        // current top-3 [[key,p]]
+    conf3: [],        // current top-3 [[key,p]] (last key)
+    perKey: [],       // per-letter ranked candidates [[[key,p],...], ...]
     theoreticalSpace: 1,
     reducedSpace: 1,
     shownSpace: 1,
@@ -101,8 +102,8 @@
     } catch (e) { $("defNote").textContent = "Could not start attack: " + e.message; return; }
 
     // reset recovered state
-    state.raw = []; state.corrected = ""; state.lattice = [];
-    $("rawText").innerHTML = ""; $("corrText").textContent = "";
+    state.raw = []; state.corrected = ""; state.lattice = []; state.perKey = [];
+    $("rawText").innerHTML = ""; $("corrText").textContent = ""; $("confBars").innerHTML = "";
     setLive(true);
     connectWs();
   }
@@ -141,6 +142,7 @@
     // The socket handler only updates state; drawing happens in the rAF loop.
     state.raw.push({ ch: msg.key === "space" ? " " : msg.key, conf: msg.confidence || 0 });
     state.conf3 = (msg.topk || []).slice(0, 3);
+    state.perKey.push(msg.topk || []);
     state.lastKey = msg.key;
     state.kbdHighlight[msg.key] = 1.0;
 
@@ -232,20 +234,26 @@
     });
   }
 
+  // One cell per detected keystroke, showing that letter's top-3 candidates.
   function renderConf() {
     var box = $("confBars");
     box.innerHTML = "";
-    var accent = cssVar("--accent"), ink = cssVar("--ink");
-    state.conf3.forEach(function (pair, idx) {
-      var row = document.createElement("div");
-      row.className = "bar-row";
-      var label = pair[0] === "space" ? "␣" : pair[0];
-      var pct = Math.round((pair[1] || 0) * 100);
-      row.innerHTML =
-        '<span class="micro">' + label + " &middot; " + pct + '%</span>' +
-        '<div class="bar-track"><div class="bar-fill" style="width:' + pct + "%;background:" +
-        (idx === 0 ? accent : ink) + '"></div></div>';
-      box.appendChild(row);
+    var per = state.perKey || [];
+    per.forEach(function (cands, i) {
+      var col = document.createElement("div");
+      col.className = "cand-col";
+      var idx = document.createElement("div");
+      idx.className = "cand-idx";
+      idx.textContent = "#" + (i + 1);
+      col.appendChild(idx);
+      (cands || []).slice(0, 3).forEach(function (pair, r) {
+        var item = document.createElement("div");
+        item.className = "cand-item" + (r === 0 ? " top" : "");
+        var glyph = pair[0] === "space" ? "␣" : pair[0];
+        item.textContent = glyph + " " + Math.round((pair[1] || 0) * 100) + "%";
+        col.appendChild(item);
+      });
+      box.appendChild(col);
     });
   }
 
@@ -540,6 +548,7 @@
     });
     state.lattice = j.per_key.map(function (row) { return row.map(function (c) { return c[0]; }); });
     state.conf3 = (j.per_key[j.per_key.length - 1] || []).slice(0, 3);
+    state.perKey = j.per_key;
     state.corrected = j.corrected || "";
     $("corrText").textContent = state.corrected;
     j.per_key.forEach(function (row) { if (row[0]) { state.kbdHighlight[row[0][0]] = 1.0; } });
