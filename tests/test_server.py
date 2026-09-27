@@ -203,3 +203,10 @@ def test_defense_measure_run_requires_session(client) -> None:
     r = client.post("/defense/measure", json={"model_name": "dak"})
     assert r.status_code == 400
     assert r.json()["ok"] is False
+
+
+def test_sessions_route_shape(client) -> None:
+    """/sessions returns a list of recorded sessions (possibly empty)."""
+    r = client.get("/sessions")
+    assert r.status_code == 200
+    assert isinstance(r.json()["sessions"], list)

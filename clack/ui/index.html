@@ -51,9 +51,7 @@
       <button class="btn ghost" id="stopBtn" disabled>Stop</button>
       <label class="micro" for="modelSel">Model</label>
       <select id="modelSel">
-        <option value="">default</option>
-        <option value="cnn">CNN</option>
-        <option value="centroid">baseline</option>
+        <option value="">loading...</option>
       </select>
       <label class="micro"><input type="checkbox" id="cleanRun" /> Clean run (event mode)</label>
       <label class="micro"><input type="checkbox" id="synthSrc" /> Wiring demo (synthetic)</label>
@@ -117,6 +115,10 @@
         <div class="toggle-row">
           <button class="btn" id="shieldBtn">Arm shield</button>
           <span class="note" id="shieldState">off</span>
+        </div>
+        <div class="toggle-row" style="margin-top:8px;">
+          <select id="defSession" title="session to measure protection on"></select>
+          <button class="btn ghost" id="measureBtn">Measure protection</button>
         </div>
         <div class="bars">
           <div class="bar-row"><span class="micro">recovery, masker off</span>

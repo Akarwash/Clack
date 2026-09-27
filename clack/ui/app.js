@@ -365,32 +365,82 @@
     refreshDefenseMeasure();
   }
 
+  function renderDefense(d) {
+    var off = Math.round((d.off || 0) * 100), on = Math.round((d.on || 0) * 100);
+    $("offBar").style.width = off + "%";
+    $("onBar").style.width = on + "%";
+    var db = d.masker_key_ratio_db;
+    $("defNote").textContent = "recovery " + off + "% to " + on + "%" +
+      (db != null && isFinite(db) ? (", masker/key " + db.toFixed(1) + " dB") : "");
+  }
+
   async function refreshDefenseMeasure() {
     try {
       var r = await fetch("/defense/measure");
       if (r.status === 404) { $("defNote").textContent = "No before/after measurement yet."; return; }
+      renderDefense(await r.json());
+    } catch (e) {}
+  }
+
+  async function runDefenseMeasure() {
+    var sid = $("defSession").value;
+    if (!sid) { $("defNote").textContent = "no session to measure on"; return; }
+    $("defNote").textContent = "measuring before/after (simulated masker)...";
+    try {
+      var r = await fetch("/defense/measure", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sid, model_name: $("modelSel").value }),
+      });
       var d = await r.json();
-      var off = Math.round((d.off || 0) * 100), on = Math.round((d.on || 0) * 100);
-      $("offBar").style.width = off + "%";
-      $("onBar").style.width = on + "%";
-      var db = d.masker_key_ratio_db;
-      $("defNote").textContent = "recovery " + off + "% to " + on + "%" +
-        (db != null && isFinite(db) ? (", masker/key " + db.toFixed(1) + " dB") : "");
+      if (!d.ok) { $("defNote").textContent = "measure failed: " + (d.detail || ""); return; }
+      renderDefense(d);
+    } catch (e) { $("defNote").textContent = "measure error: " + e.message; }
+  }
+
+  async function loadModels() {
+    try {
+      var r = await fetch("/models"); var d = await r.json();
+      var sel = $("modelSel"); sel.innerHTML = "";
+      (d.models || []).forEach(function (m) {
+        var o = document.createElement("option");
+        o.value = m.name;
+        o.textContent = m.type === "centroid" ? (m.name + " (floor)") : m.name;
+        sel.appendChild(o);
+      });
+      if (d.default) sel.value = d.default;
+    } catch (e) {}
+  }
+
+  async function loadSessions() {
+    try {
+      var r = await fetch("/sessions"); var d = await r.json();
+      var sel = $("defSession"); sel.innerHTML = "";
+      var list = d.sessions || [];
+      if (!list.length) {
+        var e0 = document.createElement("option"); e0.value = ""; e0.textContent = "no sessions"; sel.appendChild(e0);
+        return;
+      }
+      list.forEach(function (s) {
+        var o = document.createElement("option"); o.value = s.session_id; o.textContent = s.session_id; sel.appendChild(o);
+      });
     } catch (e) {}
   }
 
   async function runExposure() {
+    var sid = $("defSession").value;
+    if (!sid) { $("reasons").innerHTML = "<li>no recorded session to audit</li>"; return; }
     $("reasons").innerHTML = "<li>running...</li>";
-    // The dashboard needs a recorded sample and a trained model on-site; without
-    // them the backend returns a clear error, which we surface honestly.
+    // Audits the selected recorded session with the selected model. Without a
+    // session or model the backend returns a clear error, surfaced honestly.
     try {
       var r = await fetch("/exposure/check", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: "", endpoint: "this-endpoint" }),
+        body: JSON.stringify({ session_id: sid, model_name: $("modelSel").value, endpoint: "this-endpoint" }),
       });
       var d = await r.json();
       if (d.error) { $("reasons").innerHTML = "<li>" + d.error + "</li>"; return; }
       renderExposure(d);
+      loadFleet();
     } catch (e) { $("reasons").innerHTML = "<li>" + e.message + "</li>"; }
   }
 
@@ -444,9 +494,12 @@
     $("startBtn").addEventListener("click", startAttack);
     $("stopBtn").addEventListener("click", stopAttack);
     $("shieldBtn").addEventListener("click", toggleShield);
+    $("measureBtn").addEventListener("click", runDefenseMeasure);
     $("exposureBtn").addEventListener("click", runExposure);
 
     refreshStatus();
+    loadModels();
+    loadSessions();
     refreshDefenseMeasure();
     loadExposureLast();
     loadFleet();

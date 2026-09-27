@@ -375,6 +375,17 @@ def create_app() -> FastAPI:
     def models_route() -> "JSONResponse":
         return JSONResponse({"models": _list_models(), "default": os.path.basename(_find_default_model() or "")})
 
+    @app.get("/sessions")
+    def sessions_route() -> "JSONResponse":
+        """List recorded sessions (dirs with events.json) for the defense picker."""
+        root = config.RECORDINGS_DIR
+        out: list[dict] = []
+        if os.path.isdir(root):
+            for name in sorted(os.listdir(root), reverse=True):
+                if os.path.isfile(os.path.join(root, name, "events.json")):
+                    out.append({"session_id": name})
+        return JSONResponse({"sessions": out})
+
     @app.post("/decode")
     async def decode_route(request: "Request", model: str = "", correct: bool = True, top_n: int = 3) -> "JSONResponse":
         """Decode one uploaded audio clip: onsets -> CNN top-k -> optional LM fix.

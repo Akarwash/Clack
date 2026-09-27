@@ -38,6 +38,11 @@
       padding: 14px 28px; cursor: pointer; letter-spacing: 0.04em; }
     .recbtn.recording { background: var(--ink); }
     .recbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .secbtn { background: transparent; border: 1px solid var(--good); color: var(--good);
+      font-family: var(--mono); font-size: 13px; padding: 9px 18px; cursor: pointer; letter-spacing: 0.03em; }
+    .secbtn.on { background: var(--ink); border-color: var(--ink); color: #fff; }
+    .defrow { display: flex; align-items: center; gap: 14px; margin: 0 0 18px; padding: 10px 12px; border: 1px solid var(--line); }
+    .defrow input[type=range] { width: 120px; }
     .reclead { display: flex; align-items: center; gap: 18px; margin: 8px 0 18px; }
     .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--line); }
     .dot.live { background: var(--accent); animation: pulse 1s infinite; }
@@ -104,6 +109,13 @@
       <span class="dot" id="dot"></span>
       <div class="meterwrap"><div id="meterBar"></div></div>
       <span class="status" id="status">pick a model, then record and type</span>
+    </div>
+
+    <div class="defrow">
+      <button class="secbtn" id="maskBtn">Arm masker (defense)</button>
+      <span class="micro">level</span>
+      <input id="maskLevel" type="range" min="0.1" max="1.0" step="0.1" value="0.3" />
+      <span class="status" id="maskStatus">defense off &middot; record clean, then arm and re-record to compare</span>
     </div>
 
     <div id="results" class="hidden">

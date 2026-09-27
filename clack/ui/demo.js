@@ -307,5 +307,41 @@ function render(j) {
   });
 }
 
+// ---- masker (defense) A/B control ----
+const maskBtn = $("maskBtn");
+const maskLevel = $("maskLevel");
+const maskStatus = $("maskStatus");
+let maskerOn = false;
+
+maskBtn.addEventListener("click", async () => {
+  try {
+    if (!maskerOn) {
+      const lvl = parseFloat(maskLevel.value);
+      const r = await fetch("/defense/on", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ level: lvl }),
+      });
+      const d = await r.json();
+      maskerOn = !!d.ok && !!d.on;
+      if (maskerOn) {
+        maskStatus.innerHTML = `masker ON &middot; level ${d.level}, band ${(d.band || []).join("-")} Hz &middot; playing through speakers`;
+        maskBtn.textContent = "Disarm masker";
+        maskBtn.classList.add("on");
+      } else {
+        maskStatus.innerHTML = `<span class="err">could not arm: ${d.detail || "no output device"}</span>`;
+      }
+    } else {
+      await fetch("/defense/off", { method: "POST" });
+      maskerOn = false;
+      maskStatus.textContent = "defense off";
+      maskBtn.textContent = "Arm masker (defense)";
+      maskBtn.classList.remove("on");
+    }
+  } catch (e) {
+    maskStatus.innerHTML = `<span class="err">masker error: ${e.message || e}</span>`;
+  }
+});
+
 loadModels();
 loadMics();
