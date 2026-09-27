@@ -256,7 +256,7 @@
     state.clockTimer = setInterval(render, 250);
     clearInterval(state.levelTimer);
     state.stalled = false;
-    state.levelTimer = setInterval(pollLevel, 300);
+    state.levelTimer = setInterval(pollLevel, 150);
   }
 
   async function stop(note) {
