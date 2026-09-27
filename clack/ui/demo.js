@@ -12,6 +12,15 @@ const statusEl = $("status");
 const dot = $("dot");
 const meterBar = $("meterBar");
 const results = $("results");
+const protectedSel = $("protectedMic");
+const protectedResults = results.cloneNode(true);
+protectedResults.id = "protectedResults";
+protectedResults.querySelectorAll("[id]").forEach(el => { el.id = "protected_" + el.id; });
+protectedResults.querySelector("h2").textContent = "Protected input (BlackHole)";
+const comparison = document.createElement("div");
+comparison.className = "comparison";
+results.before(comparison);
+comparison.append(results, protectedResults);
 
 let correctOn = true;
 let topN = 3;
@@ -28,6 +37,8 @@ const MODEL_NOTES = {
 };
 
 function noteFor(m) {
+  // Fresh checkpoints can replace a named model; prefer its own metadata.
+  if (m.metrics && m.metrics.note) return String(m.metrics.note);
   if (MODEL_NOTES[m.name]) return MODEL_NOTES[m.name];
   if (m.type === "centroid") return "Nearest-centroid baseline (the accuracy floor).";
   const met = m.metrics || {};
@@ -64,20 +75,23 @@ function updateHint() {
 }
 
 async function loadMics() {
-  try {
-    // A getUserMedia call first so device labels are populated (permission).
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const inputs = devices.filter((d) => d.kind === "audioinput");
-    for (const d of inputs) {
-      if (!d.deviceId) continue;
-      const opt = document.createElement("option");
-      opt.value = d.deviceId;
-      opt.textContent = d.label || `mic ${micSel.length}`;
-      micSel.appendChild(opt);
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const inputs = devices.filter(d => d.kind === "audioinput" && d.deviceId && d.deviceId !== "default");
+  const current = await fetch("/virtual-mic/status").then(r => r.json());
+  const previous = micSel.value;
+  micSel.replaceChildren(new Option("Choose physical microphone", ""));
+  protectedSel.replaceChildren(new Option("BlackHole 2ch unavailable", ""));
+  for (const d of inputs) {
+    if (/BlackHole 2ch/.test(d.label)) {
+      protectedSel.replaceChildren(new Option(d.label, d.deviceId));
+    } else if (!/Clack Protected Bridge/.test(d.label)) {
+      micSel.add(new Option(d.label || "Microphone (grant permission)", d.deviceId));
     }
-  } catch (e) {
-    /* labels appear after the first recording grants permission */
   }
+  const matched = inputs.find(d => d.label.includes(current.input_device || "HyperX SoloCast"));
+  if ([...micSel.options].some(o => o.value === previous && previous)) micSel.value = previous;
+  else if (matched) micSel.value = matched.deviceId;
+  return { inputs, current };
 }
 
 // ---- segmented toggles ----
@@ -95,55 +109,92 @@ wireSeg("topn", (v) => { topN = parseInt(v, 10); });
 modelSel.addEventListener("change", updateHint);
 
 // ---- capture ----
-let audioCtx = null, mediaStream = null, source = null, processor = null;
-let chunks = [], capturing = false;
+let audioCtx = null, mediaStreams = [], sources = [], processor = null, merger = null;
+let chunks = [[], []], capturing = false, recordingOptions = null, captureProblem = null;
+window.addEventListener("clack-protection-status", e => {
+  if (capturing && (!e.detail.running || e.detail.error)) captureProblem = "Protected route stopped during recording; repeat the comparison.";
+});
 
 async function startCapture() {
-  const deviceId = micSel.value || undefined;
-  mediaStream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      deviceId: deviceId ? { exact: deviceId } : undefined,
-      echoCancellation: false,
-      noiseSuppression: false,
-      autoGainControl: false,
-      channelCount: 1,
-    },
-  });
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
-  source = audioCtx.createMediaStreamSource(mediaStream);
-  processor = audioCtx.createScriptProcessor(4096, 1, 1);
-  chunks = [];
-  processor.onaudioprocess = (e) => {
-    const d = e.inputBuffer.getChannelData(0);
-    chunks.push(new Float32Array(d));
-    let sum = 0;
-    for (let i = 0; i < d.length; i++) sum += d[i] * d[i];
-    setMeter(Math.sqrt(sum / d.length));
-  };
-  const mute = audioCtx.createGain();
-  mute.gain.value = 0; // keep the processor firing without audible feedback
-  source.connect(processor);
-  processor.connect(mute);
-  mute.connect(audioCtx.destination);
-  capturing = true;
+  captureProblem = null;
+  try {
+    // Grant access first so browser device labels can be matched to the validated route.
+    const grant = await navigator.mediaDevices.getUserMedia({ audio: true });
+    grant.getTracks().forEach(t => t.stop());
+    let { inputs, current } = await loadMics();
+    if (!current.running) {
+      const response = await fetch("/virtual-mic/start", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bridge_device: $("bridgeDevice").value, level: Number($("protectionLevel").value) })
+      });
+      current = await response.json();
+      if (!response.ok || !current.running) throw new Error(current.detail || current.error || "Start Virtual Mic first");
+    }
+    const raw = inputs.find(d => d.deviceId === micSel.value);
+    const protectedInput = inputs.find(d => d.deviceId === protectedSel.value);
+    if (!raw || !raw.label.includes(current.input_device)) throw new Error("Select the bridge's physical microphone: " + current.input_device);
+    if (!protectedInput || !/BlackHole 2ch/.test(protectedInput.label)) throw new Error("BlackHole 2ch is unavailable; refresh microphones");
+    await window.ClackProtection.checkRecordingDevice(protectedInput.deviceId);
+    // Open both streams before connecting them to one audio clock and one processor.
+    for (const deviceId of [raw.deviceId, protectedInput.deviceId]) {
+      mediaStreams.push(await navigator.mediaDevices.getUserMedia({ audio: {
+        deviceId: { exact: deviceId }, echoCancellation: false,
+        noiseSuppression: false, autoGainControl: false, channelCount: 1
+      } }));
+    }
+    mediaStreams.forEach(stream => stream.getTracks().forEach(track => {
+      track.addEventListener("ended", () => { if (capturing) captureProblem = "A microphone disconnected; repeat the comparison."; });
+    }));
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+    await audioCtx.resume();
+    merger = audioCtx.createChannelMerger(2);
+    sources = mediaStreams.map(stream => audioCtx.createMediaStreamSource(stream));
+    sources.forEach((source, i) => source.connect(merger, 0, i));
+    processor = audioCtx.createScriptProcessor(4096, 2, 1);
+    chunks = [[], []];
+    processor.onaudioprocess = e => {
+      for (let i = 0; i < 2; i++) {
+        const data = e.inputBuffer.getChannelData(i);
+        chunks[i].push(new Float32Array(data));
+        let sum = 0;
+        for (const value of data) sum += value * value;
+        setMeter(Math.sqrt(sum / data.length), i);
+      }
+    };
+    const mute = audioCtx.createGain();
+    mute.gain.value = 0;
+    merger.connect(processor); processor.connect(mute); mute.connect(audioCtx.destination);
+    recordingOptions = { model: modelSel.value, correct: correctOn ? "true" : "false", top_n: String(topN) };
+    capturing = true;
+    modelSel.disabled = micSel.disabled = protectedSel.disabled = $("refreshDemoMics").disabled = true;
+  } catch (error) {
+    await stopCapture();
+    throw error;
+  }
 }
 
-function setMeter(rms) {
+function setMeter(rms, channel = 0) {
   const db = rms > 1e-6 ? 20 * Math.log10(rms) : -80;
   const pct = Math.max(0, Math.min(100, ((db + 60) / 50) * 100));
-  meterBar.style.width = pct + "%";
+  const bar = channel ? $("protectedMeterBar") : meterBar;
+  bar.style.width = pct + "%";
+  bar.parentElement.setAttribute("aria-valuenow", String(Math.round(pct)));
 }
 
 async function stopCapture() {
   capturing = false;
-  if (processor) processor.disconnect();
-  if (source) source.disconnect();
-  if (mediaStream) mediaStream.getTracks().forEach((t) => t.stop());
+  if (processor) { processor.onaudioprocess = null; processor.disconnect(); }
+  sources.forEach(source => source.disconnect());
+  if (merger) merger.disconnect();
+  mediaStreams.forEach(stream => stream.getTracks().forEach(track => track.stop()));
   const rate = audioCtx ? audioCtx.sampleRate : 44100;
-  const merged = concat(chunks);
+  const samples = chunks.map(concat);
   if (audioCtx) await audioCtx.close();
-  setMeter(0);
-  return { samples: merged, rate };
+  audioCtx = processor = merger = null;
+  sources = []; mediaStreams = []; chunks = [[], []];
+  setMeter(0); setMeter(0, 1);
+  modelSel.disabled = micSel.disabled = protectedSel.disabled = $("refreshDemoMics").disabled = false;
+  return { samples, rate };
 }
 
 function concat(list) {
@@ -188,53 +239,46 @@ function encodeWav(samples, sr) {
 
 // ---- record button ----
 recBtn.addEventListener("click", async () => {
+  recBtn.disabled = true;
   if (!capturing) {
     try {
+      statusEl.textContent = "opening both microphones…";
       await startCapture();
-      if (micSel.length <= 1) loadMics();
-      recBtn.textContent = "Stop and decode";
-      recBtn.classList.add("recording");
-      dot.classList.add("live");
-      statusEl.textContent = "listening... type your text or password now";
-    } catch (e) {
-      statusEl.innerHTML = `<span class="err">mic error: ${e.message || e}</span>`;
-    }
+      results.classList.add("hidden"); protectedResults.classList.add("hidden");
+      recBtn.textContent = "Stop and decode both";
+      recBtn.classList.add("recording"); dot.classList.add("live");
+      statusEl.textContent = "recording raw + protected inputs… type now";
+    } catch (e) { statusEl.textContent = "Mic error: " + (e.message || e); }
+    finally { recBtn.disabled = false; }
     return;
   }
-  // Stop -> decode.
-  recBtn.disabled = true;
-  recBtn.classList.remove("recording");
-  dot.classList.remove("live");
+  recBtn.classList.remove("recording"); dot.classList.remove("live");
   recBtn.textContent = "Start recording";
-  statusEl.textContent = "decoding...";
-  const { samples, rate } = await stopCapture();
-  recBtn.disabled = false;
-  if (samples.length === 0) {
-    statusEl.innerHTML = `<span class="err">no audio captured</span>`;
-    return;
-  }
+  statusEl.textContent = "decoding both inputs…";
   try {
-    const at44 = await to44k(samples, rate);
-    const blob = encodeWav(at44, 44100);
-    const params = new URLSearchParams({
-      model: modelSel.value,
-      correct: correctOn ? "true" : "false",
-      top_n: String(topN),
+    const { samples, rate } = await stopCapture();
+    if (captureProblem) throw new Error(captureProblem);
+    const params = new URLSearchParams(recordingOptions);
+    const decoded = await Promise.allSettled(samples.map(async audio => {
+      if (!audio.length) throw new Error("No audio captured");
+      const at44 = await to44k(audio, rate);
+      const response = await fetch("/decode?" + params, {
+        method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: encodeWav(at44, 44100)
+      });
+      const json = await response.json();
+      if (!response.ok || !json.ok) throw new Error(json.detail || "Decode failed");
+      return json;
+    }));
+    decoded.forEach((outcome, i) => {
+      if (outcome.status === "fulfilled") render(outcome.value, i === 1);
+      else {
+        (i ? protectedResults : results).classList.remove("hidden");
+        $(i ? "protected_resultStatus" : "resultStatus").textContent = "Decode error: " + outcome.reason.message;
+      }
     });
-    const res = await fetch("/decode?" + params.toString(), {
-      method: "POST",
-      headers: { "Content-Type": "application/octet-stream" },
-      body: blob,
-    });
-    const json = await res.json();
-    if (!json.ok) {
-      statusEl.innerHTML = `<span class="err">${json.detail || "decode failed"}</span>`;
-      return;
-    }
-    render(json);
-  } catch (e) {
-    statusEl.innerHTML = `<span class="err">decode error: ${e.message || e}</span>`;
-  }
+    statusEl.textContent = decoded.every(d => d.status === "fulfilled") ? "Both inputs decoded from the same recording." : "Comparison incomplete; see each result.";
+  } catch (e) { statusEl.textContent = "Recording error: " + e.message; }
+  finally { recBtn.disabled = false; }
 });
 
 // ---- render ----
@@ -257,12 +301,17 @@ function fmtBig(str) {
   return `${lead[0]}.${lead.slice(1)}e${str.length - 1}`;
 }
 
-function render(j) {
-  results.classList.remove("hidden");
+function render(j, protectedInput = false) {
+  const $ = id => document.getElementById((protectedInput ? "protected_" : "") + id);
+  const statusEl = $("resultStatus");
+  (protectedInput ? protectedResults : results).classList.remove("hidden");
   if (j.n_presses === 0) {
     statusEl.textContent = j.detail || "no keystrokes detected";
     renderTranscript($("transcript"), "");
     $("lattice").innerHTML = "";
+    $("correctedPanel").classList.add("hidden");
+    ["spaceFull", "spaceRed", "spaceFactor"].forEach(id => { $(id).textContent = "—"; });
+    $("crackLine").textContent = "No keystrokes detected; no password estimate available.";
     return;
   }
   statusEl.textContent = `${j.n_presses} keystrokes | ${j.model} | ${j.duration_s}s audio | ${j.latency_ms}ms decode`;
@@ -311,41 +360,13 @@ function render(j) {
   });
 }
 
-// ---- masker (defense) A/B control ----
-const maskBtn = $("maskBtn");
-const maskLevel = $("maskLevel");
-const maskStatus = $("maskStatus");
-let maskerOn = false;
-
-maskBtn.addEventListener("click", async () => {
-  try {
-    if (!maskerOn) {
-      const lvl = parseFloat(maskLevel.value);
-      const r = await fetch("/defense/on", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ level: lvl }),
-      });
-      const d = await r.json();
-      maskerOn = !!d.ok && !!d.on;
-      if (maskerOn) {
-        maskStatus.innerHTML = `masker ON &middot; level ${d.level}, band ${(d.band || []).join("-")} Hz &middot; playing through speakers`;
-        maskBtn.textContent = "Disarm masker";
-        maskBtn.classList.add("on");
-      } else {
-        maskStatus.innerHTML = `<span class="err">could not arm: ${d.detail || "no output device"}</span>`;
-      }
-    } else {
-      await fetch("/defense/off", { method: "POST" });
-      maskerOn = false;
-      maskStatus.textContent = "defense off";
-      maskBtn.textContent = "Arm masker (defense)";
-      maskBtn.classList.remove("on");
-    }
-  } catch (e) {
-    maskStatus.innerHTML = `<span class="err">masker error: ${e.message || e}</span>`;
-  }
-});
-
 loadModels();
-loadMics();
+loadMics().catch(() => {});
+
+$("refreshDemoMics").addEventListener("click", async () => {
+  try {
+    const grant = await navigator.mediaDevices.getUserMedia({ audio: true });
+    grant.getTracks().forEach(t => t.stop());
+    await loadMics();
+  } catch(e) { statusEl.textContent = "Microphone permissions: " + e.message; }
+});

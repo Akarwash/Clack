@@ -101,3 +101,25 @@ CORRECTED line next to RAW live.
 
 `python scripts/preflight.py` runs the same checks from the terminal and exits
 non-zero if any item fails. Run it before every demo.
+## Protected virtual microphone
+
+- `GET /virtual-mic/devices`: installed-driver flag and validated aggregate routes
+  (`bridge_device`, `input_device`, `output_device`, `ready`; invalid configured
+  routes include `detail`). No stream is opened.
+- `POST /virtual-mic/start`: `{bridge_device?, level?}`, defaults to
+  `Clack Protected Bridge` and 0.3. Validates routing before capturing; returns
+  status. Level must be finite, 0.1–1.0. Conflicting modes/capture return 409;
+  unavailable or invalid routing returns 400; invalid request values return 422.
+- `POST /virtual-mic/settings`: `{level}`, updates level without reopening streams.
+- `POST /virtual-mic/stop`: stops capture/output; virtual output is silence.
+- `GET /virtual-mic/status`: `running`, `ok`, `error`, route names, `level`, `band`,
+  `input_rms`, `output_rms`, `latency_ms`, `limited_fraction`, `stream_errors`,
+  `speaker_on`, `output_when_stopped`, and `processing`. Running is routing health,
+  not proof of consumer selection or effectiveness. A failure may have `ok:false`
+  even after cleanup; a subsequent successful start clears it.
+- `POST /attack/start` additionally accepts `input_device` (backend device name).
+  Omission retains the configured mic. While Virtual Mic runs, use `BlackHole 2ch`.
+
+See [setup and protection boundaries](virtual-microphone.md). Existing
+`/defense/on` and `/defense/off` remain speaker-masking controls. Existing recorded
+defense measurements remain software-mixed evaluations, not virtual-device tests.

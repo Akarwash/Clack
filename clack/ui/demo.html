@@ -52,8 +52,12 @@
     .dot.live { background: var(--accent); animation: pulse 1s infinite; }
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
     .meterwrap { flex: 1; max-width: 300px; height: 12px; background: var(--line); position: relative; overflow: hidden; }
-    #meterBar { position: absolute; left: 0; top: 0; bottom: 0; width: 0%; background: var(--good); transition: width 60ms linear; }
+    .meterfill { position: absolute; left: 0; top: 0; bottom: 0; width: 0%; background: var(--good); transition: width 60ms linear; }
     .status { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+    .comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+    .comparison h2 { font-size: 18px; margin-top: 24px; }
+    .comparison .transcript { font-size: 24px; }
+    @media (max-width: 700px) { .comparison { grid-template-columns: 1fr; } }
     .panel { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 8px; }
     .label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
     .transcript { font-family: var(--mono); font-size: 30px; line-height: 1.4; word-break: break-all; min-height: 40px; }
@@ -88,8 +92,9 @@
         <select id="model"></select>
       </div>
       <div class="field">
-        <label class="micro" for="mic">Microphone</label>
-        <select id="mic"><option value="">system default</option></select>
+        <label class="micro" for="mic">Unprotected microphone</label>
+        <select id="mic"><option value="">system default (unverified)</option></select>
+        <button class="secbtn" id="refreshDemoMics">Refresh microphones</button>
       </div>
       <div class="field">
         <span class="micro">Language correction</span>
@@ -112,18 +117,21 @@
     <div class="reclead">
       <button class="recbtn" id="recBtn">Start recording</button>
       <span class="dot" id="dot"></span>
-      <div class="meterwrap"><div id="meterBar"></div></div>
-      <span class="status" id="status">pick a model, then record and type</span>
+      <div class="meterwrap" role="meter" aria-label="Unprotected input level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="meterBar" class="meterfill"></div></div>
+      <span class="status" id="status">pick a model, then record both inputs</span>
     </div>
 
-    <div class="defrow">
-      <button class="secbtn" id="maskBtn">Arm masker (defense)</button>
-      <span class="micro">level</span>
-      <input id="maskLevel" type="range" min="0.1" max="1.0" step="0.1" value="0.3" />
-      <span class="status" id="maskStatus">defense off &middot; record clean, then arm and re-record to compare</span>
+    <section id="protectionControls" class="panel"></section>
+    <div class="reclead">
+      <label class="micro" for="protectedMic">Protected input</label>
+      <select id="protectedMic"><option value="">Refresh microphones to find BlackHole</option></select>
+      <div class="meterwrap" role="meter" aria-label="Protected input level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="protectedMeterBar" class="meterfill"></div></div>
     </div>
+    <p class="status">Recording captures the physical mic and BlackHole together, then decodes both with the same settings. The bridge starts automatically if needed. Masking can create extra detections; use known typed text to judge accuracy.</p>
 
     <div id="results" class="hidden">
+      <h2>Unprotected microphone</h2>
+      <p id="resultStatus" class="status"></p>
       <div class="panel">
         <div class="label">Recovered (top-1 acoustic guess)</div>
         <div class="transcript" id="transcript"></div>
@@ -151,10 +159,11 @@
       Matched-rig demo: this model was trained on a specific microphone (HyperX SoloCast) and
       keyboard (dak). For the headline accuracy, record on that same rig with input processing
       (echo cancellation, noise suppression, auto-gain) turned off, which this page requests
-      automatically. A different mic or keyboard will read much lower. Nothing leaves this
-      machine: capture, model, and correction all run locally.
+      automatically. A different mic or keyboard will read much lower. Audio capture and acoustic inference stay local. With language correction On, candidate
+      characters and probabilities are sent to Anthropic for After language-model correction; audio is never sent.
     </div>
   </div>
+  <script src="protection.js"></script>
   <script src="demo.js"></script>
 </body>
 </html>

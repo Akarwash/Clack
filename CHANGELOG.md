@@ -1,5 +1,13 @@
 # Changelog
 
+## Protected virtual microphone
+
+- Add macOS BlackHole routing with validated aggregate membership, continuous
+  digital noise and decoys, health meters, limiting, and silence on failure/stop.
+- Add separate Speaker Masker and Virtual Mic controls on Demo and Attack,
+  explicit recording/live microphone selection, and capture conflict handling.
+- Document manual setup, protection boundaries, and future suppression.
+
 All notable changes to Clack are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Clack adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).

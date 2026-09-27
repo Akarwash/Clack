@@ -15,7 +15,7 @@ It runs the same checks as `GET /status` and prints a checklist:
 
 - `microphone`: at least one input device is present (names the default).
 - `sample_rate`: the configured capture rate (44100).
-- `keyboard_permission`: a pynput listener can be created. Note: on macOS an
+- `keyboard_permission`: macOS permissions are read without creating a listener. Note: an
   untrusted process prints "not trusted" and silently fails to capture rather than
   raising, so also confirm Input Monitoring and Accessibility are granted in System
   Settings before collecting training data.

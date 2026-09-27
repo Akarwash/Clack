@@ -43,6 +43,10 @@ To capture `docs/dashboard.png`: run `python scripts/serve.py`, open
 
 ## Install
 
+For digital microphone protection, see [Protected Virtual Mic setup](docs/virtual-microphone.md).
+It adds noise and decoy clicks to a BlackHole stream on macOS, separately from
+speaker masking. Keystroke suppression is future work.
+
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
